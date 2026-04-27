@@ -1,0 +1,1312 @@
+openapi: 3.0.3
+info:
+  title: ImageChain Market API
+  version: 1.0.0
+  description: MetaMask 기반 이미지 거래 및 검증 플랫폼 API
+
+servers:
+  - url: http://localhost:3000
+
+tags:
+  - name: Auth
+  - name: User
+  - name: Image
+  - name: Verification
+  - name: Market
+  - name: Favorite
+
+paths:
+  /auth/wallet/nonce:
+    post:
+      tags: [Auth]
+      summary: 지갑 로그인용 nonce 발급
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [walletAddress, chainId, walletType]
+              properties:
+                walletAddress:
+                  type: string
+                chainId:
+                  type: integer
+                walletType:
+                  type: string
+                  example: METAMASK
+            example:
+              walletAddress: "0xA1b2C3d4E5f678901234567890abcdef12345678"
+              chainId: 11155111
+              walletType: "METAMASK"
+      responses:
+        200:
+          description: nonce 발급 성공
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  walletAddress:
+                    type: string
+                  nonce:
+                    type: string
+                  message:
+                    type: string
+                  expiresAt:
+                    type: string
+                    format: date-time
+              example:
+                walletAddress: "0xA1b2C3d4E5f678901234567890abcdef12345678"
+                nonce: "f84c9c0a-2281-4f5d-8e66-91b8b70b1abc"
+                message: "Sign this message to login.\nService: ImageChain Market\nWallet: 0xA1b2C3d4E5f678901234567890abcdef12345678\nNonce: f84c9c0a-2281-4f5d-8e66-91b8b70b1abc\nIssued At: 2026-04-05T13:00:00Z"
+                expiresAt: "2026-04-05T13:05:00Z"
+        401:
+          $ref: '#/components/responses/UnauthorizedError'
+        403:
+          $ref: '#/components/responses/ForbiddenError'
+        404:
+          $ref: '#/components/responses/NotFound'
+
+  /auth/wallet/login:
+    post:
+      tags: [Auth]
+      summary: 지갑 서명 로그인
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [walletAddress, signature, nonce]
+              properties:
+                walletAddress:
+                  type: string
+                signature:
+                  type: string
+                nonce:
+                  type: string
+                chainId:
+                  type: integer
+                walletType:
+                  type: string
+            example:
+              walletAddress: "0xA1b2..."
+              signature: "0x4d6f...ab12"
+              nonce: "f84c9c0a-xxxx"
+              chainId: 11155111
+              walletType: "METAMASK"
+      responses:
+        200:
+          description: 로그인 성공
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accessToken:
+                    type: string
+                  refreshToken:
+                    type: string
+                  tokenType:
+                    type: string
+                  expiresIn:
+                    type: integer
+                  isNewUser:
+                    type: boolean
+                  user:
+                    type: object
+                    properties:
+                      id:
+                        type: integer
+                      walletAddress:
+                        type: string
+                      nickname:
+                        type: string
+                      role:
+                        type: string
+              example:
+                accessToken: "eyJhbGciOiJIUzI1NiJ9..."
+                refreshToken: "def50200ab..."
+                tokenType: "Bearer"
+                expiresIn: 3600
+                isNewUser: false
+                user:
+                  id: 1
+                  walletAddress: "0xA1b2..."
+                  nickname: "photo_creator"
+                  role: "USER"
+        401:
+          $ref: '#/components/responses/UnauthorizedError'
+        403:
+          $ref: '#/components/responses/ForbiddenError'
+        404:
+          $ref: '#/components/responses/NotFound'
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: 토큰 재발급
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                refreshToken:
+                  type: string
+            example:
+              refreshToken: "def50200ab..."
+      responses:
+        200:
+          description: 토큰 재발급 성공
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accessToken:
+                    type: string
+                  tokenType: string
+                  expiresIn: integer
+              example:
+                accessToken: "eyJhbGciOiJIUzI1NiJ9.new..."
+                tokenType: "Bearer"
+                expiresIn: 3600
+        401:
+          $ref: '#/components/responses/UnauthorizedError'
+        403:
+          $ref: '#/components/responses/ForbiddenError'
+        404:
+          $ref: '#/components/responses/NotFound'
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: 로그아웃
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties:
+                refreshToken:
+                  type: string
+            example:
+              refreshToken: "def50200ab..."
+      responses:
+        204:
+          description: 로그아웃 성공
+        401:
+          $ref: '#/components/responses/UnauthorizedError'
+        403:
+          $ref: '#/components/responses/ForbiddenError'
+        404:
+          $ref: '#/components/responses/NotFound'
+
+  /auth/wallet/session:
+    get:
+      tags: [Auth]
+      summary: 현재 로그인 지갑 세션 조회
+      security:
+        - bearerAuth: []
+      responses:
+        200:
+          description: 세션 정보 반환
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  userId: integer
+                  walletAddress: string
+                  walletType: string
+                  chainId: integer
+                  authenticated: boolean
+              example:
+                userId: 15
+                walletAddress: "0xA1b2C3d4E5f678901234567890abcdef12345678"
+                walletType: "METAMASK"
+                chainId: 11155111
+                authenticated: true
+        401:
+          $ref: '#/components/responses/UnauthorizedError'
+        403:
+          $ref: '#/components/responses/ForbiddenError'
+        404:
+          $ref: '#/components/responses/NotFound'
+
+  /users/signup:
+    post:
+      tags: [User]
+      summary: 회원가입
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, nickname, profileImageUrl]
+              properties:
+                name:
+                  type: string
+                nickname:
+                  type: string
+                profileImageUrl:
+                  type: string
+            example:
+              name: "홍길동"
+              nickname: "photo_creator"
+              profileImageUrl: "https://cdn.example.com/profiles/default.png"
+      responses:
+        201:
+          description: 회원가입 성공
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                  walletAddress:
+                    type: string
+                  name:
+                    type: string
+                  nickname:
+                    type: string
+                  profileImageUrl:
+                    type: string
+              example:
+                id: 15
+                walletAddress: "0xA1b2C3d4E5f678901234567890abcdef12345678"
+                name: "홍길동"
+                nickname: "photo_creator"
+                profileImageUrl: "https://cdn.example.com/profiles/default.png"
+        401:
+          $ref: '#/components/responses/UnauthorizedError'
+        403:
+          $ref: '#/components/responses/ForbiddenError'
+        404:
+          $ref: '#/components/responses/NotFoundImage'
+
+  /users/me:
+    get:
+      tags: [User]
+      summary: 내 정보 조회
+      security:
+        - bearerAuth: []
+      responses:
+        200:
+          description: 유저 정보 반환
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                  walletAddress:
+                    type: string
+                  name:
+                    type: string
+                  nickname:
+                    type: string
+                  profileImageUrl:
+                    type: string
+              example:
+                id: 15
+                walletAddress: "0xA1b2C3d4E5f678901234567890abcdef12345678"
+                name: "홍길동"
+                nickname: "photo_creator"
+                profileImageUrl: "https://cdn.example.com/profiles/15.png"
+        401:
+          $ref: '#/components/responses/UnauthorizedError'
+        403:
+          $ref: '#/components/responses/ForbiddenError'
+        404:
+          $ref: '#/components/responses/NotFoundImage'
+
+  /users/profile:
+    patch:
+      tags: [User]
+      summary: 유저 정보 수정
+      security:
+        - bearerAuth: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                nickname:
+                  type: string
+                profileImageUrl:
+                  type: string
+            example:
+              name: "홍길순"
+              nickname: "creator_hong"
+              profileImageUrl: "https://cdn.example.com/profiles/15-new.png"
+      responses:
+        200:
+          description: 수정 성공
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                  walletAddress:
+                    type: string
+                  name:
+                    type: string
+                  nickname:
+                    type: string
+                  profileImageUrl:
+                    type: string
+              example:
+                id: 15
+                walletAddress: "0xA1b2C3d4E5f678901234567890abcdef12345678"
+                name: "홍길순"
+                nickname: "creator_hong"
+                profileImageUrl: "https://cdn.example.com/profiles/15-new.png"
+        401:
+          $ref: '#/components/responses/UnauthorizedError'
+        403:
+          $ref: '#/components/responses/ForbiddenError'
+        404:
+          $ref: '#/components/responses/NotFoundImage'
+
+  /images:
+    post:
+      tags: [Image]
+      summary: 이미지 업로드 및 블록체인 등록
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - image
+                - title
+                - price
+                - category
+                - deviceId
+                - capturedAt
+              properties:
+                image:
+                  type: string
+                  format: binary
+                title:
+                  type: string
+                description:
+                  type: string
+                price:
+                  type: number
+                category:
+                  type: string
+                  example: LANDSCAPE
+                deviceId:
+                  type: string
+                capturedAt:
+                  type: string
+                  format: date-time
+            example:
+              title: "한강 야경"
+              description: "직접 촬영한 한강 야경 사진입니다."
+              price: 5000
+              category: "LANDSCAPE"
+              deviceId: "device-abc-123"
+              capturedAt: "2026-03-29T14:30:00Z"
+      responses:
+        201:
+          description: 이미지 업로드 성공
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                  title:
+                    type: string
+                  imageUrl:
+                    type: string
+                  thumbnailUrl:
+                    type: string
+                  price:
+                    type: number
+                  imageHash:
+                    type: string
+                  verificationStatus:
+                    type: string
+                  txHash:
+                    type: string
+                  createdAt:
+                    type: string
+                    format: date-time
+              example:
+                id: 101
+                title: "한강 야경"
+                imageUrl: "https://cdn.example.com/images/101-original.jpg"
+                thumbnailUrl: "https://cdn.example.com/images/101-thumb.jpg"
+                price: 5000
+                imageHash: "0x8f12ab34cd56ef"
+                verificationStatus: "VERIFIED"
+                txHash: "0xa12345bcd67890"
+                createdAt: "2026-03-29T14:31:10Z"
+        401:
+          $ref: '#/components/responses/UnauthorizedError'
+        403:
+          $ref: '#/components/responses/ForbiddenError'
+        404:
+          $ref: '#/components/responses/NotFoundImage'
+    get:
+      tags: [Image]
+      summary: 전체 이미지 조회
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          required: true
+          schema:
+            type: integer
+          example: 0
+        - name: size
+          in: query
+          required: true
+          schema:
+            type: integer
+          example: 20
+        - name: sort
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [latest, oldest]
+          example: latest
+      responses:
+        200:
+          description: 이미지 목록 조회 성공
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: integer
+                    title:
+                      type: string
+                    thumbnailUrl:
+                      type: string
+                    price:
+                      type: number
+                    verificationStatus:
+                      type: string
+                    isSold:
+                      type: boolean
+              example:
+                - id: 101
+                  title: "한강 야경"
+                  thumbnailUrl: "https://cdn.example.com/images/101-thumb.jpg"
+                  price: 5000
+                  verificationStatus: "VERIFIED"
+                  isSold: false
+                - id: 102
+                  title: "도심 거리"
+                  thumbnailUrl: "https://cdn.example.com/images/102-thumb.jpg"
+                  price: 3000
+                  verificationStatus: "VERIFIED"
+                  isSold: false
+        401:
+          $ref: '#/components/responses/UnauthorizedError'
+        403:
+          $ref: '#/components/responses/ForbiddenError'
+        404:
+          $ref: '#/components/responses/NotFoundImage'
+
+  /images/{imageId}:
+    get:
+      tags: [Image]
+      summary: 이미지 상세 조회
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: imageId
+          in: path
+          required: true
+          schema:
+            type: integer
+          example: 101
+      responses:
+        200:
+          description: 이미지 상세 정보
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                  title:
+                    type: string
+                  description:
+                    type: string
+                  imageUrl:
+                    type: string
+                  thumbnailUrl:
+                    type: string
+                  price:
+                    type: number
+                  category:
+                    type: string
+                  seller:
+                    type: object
+                    properties:
+                      id:
+                        type: integer
+                      nickname:
+                        type: string
+                  verification:
+                    type: object
+                    properties:
+                      status:
+                        type: string
+                      imageHash:
+                        type: string
+                      timestamp:
+                        type: string
+                        format: date-time
+                      deviceId:
+                        type: string
+                      txHash:
+                        type: string
+                      blockNumber:
+                        type: integer
+                  isOwner:
+                    type: boolean
+                  isSold:
+                    type: boolean
+              example:
+                id: 101
+                title: "한강 야경"
+                description: "직접 촬영한 한강 야경 사진입니다."
+                imageUrl: "https://cdn.example.com/images/101-original.jpg"
+                thumbnailUrl: "https://cdn.example.com/images/101-thumb.jpg"
+                price: 5000
+                category: "LANDSCAPE"
+                seller:
+                  id: 1
+                  nickname: "photo_creator"
+                verification:
+                  status: "VERIFIED"
+                  imageHash: "0x8f12ab34cd56ef"
+                  timestamp: "2026-03-29T14:31:10Z"
+                  deviceId: "device-abc-123"
+                  txHash: "0xa12345bcd67890"
+                  blockNumber: 245
+                isOwner: false
+                isSold: false
+        401:
+          $ref: '#/components/responses/UnauthorizedError'
+        403:
+          $ref: '#/components/responses/ForbiddenError'
+        404:
+          $ref: '#/components/responses/NotFoundImage'
+    delete:
+      tags: [Image]
+      summary: 이미지 삭제
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: imageId
+          in: path
+          required: true
+          schema:
+            type: integer
+          example: 101
+      responses:
+        204:
+          description: 삭제 성공
+        401:
+          $ref: '#/components/responses/UnauthorizedError'
+        403:
+          $ref: '#/components/responses/ForbiddenError'
+        404:
+          $ref: '#/components/responses/NotFound'
+
+  /images/search:
+    get:
+      tags: [Image]
+      summary: 이미지 검색
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: keyword
+          in: query
+          required: false
+          schema:
+            type: string
+          example: "야경"
+        - name: category
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [LANDSCAPE, URBAN, ADVENTURE]
+          example: LANDSCAPE
+        - name: page
+          in: query
+          required: true
+          schema:
+            type: integer
+          example: 0
+        - name: size
+          in: query
+          required: true
+          schema:
+            type: integer
+          example: 20
+      responses:
+        200:
+          description: 이미지 검색 결과
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: integer
+                    title:
+                      type: string
+                    thumbnailUrl:
+                      type: string
+                    price:
+                      type: number
+                    verificationStatus:
+                      type: string
+              example:
+                - id: 101
+                  title: "한강 야경"
+                  thumbnailUrl: "https://cdn.example.com/images/101-thumb.jpg"
+                  price: 5000
+                  verificationStatus: "VERIFIED"
+        401:
+          $ref: '#/components/responses/UnauthorizedError'
+        403:
+          $ref: '#/components/responses/ForbiddenError'
+        404:
+          $ref: '#/components/responses/NotFoundImage'
+
+  /users/me/images:
+    get:
+      tags: [Image]
+      summary: 내가 업로드한 이미지 목록 조회
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          required: true
+          schema:
+            type: integer
+          example: 0
+        - name: size
+          in: query
+          required: true
+          schema:
+            type: integer
+          example: 20
+      responses:
+        200:
+          description: 내 이미지 목록 조회 성공
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: integer
+                    title:
+                      type: string
+                    thumbnailUrl:
+                      type: string
+                    price:
+                      type: number
+                    verificationStatus:
+                      type: string
+                    isSold:
+                      type: boolean
+                    createdAt:
+                      type: string
+                      format: date-time
+              example:
+                - id: 101
+                  title: "한강 야경"
+                  thumbnailUrl: "https://cdn.example.com/images/101-thumb.jpg"
+                  price: 5000
+                  verificationStatus: "VERIFIED"
+                  isSold: false
+                  createdAt: "2026-03-29T14:31:10Z"
+        401:
+          $ref: '#/components/responses/UnauthorizedError'
+        403:
+          $ref: '#/components/responses/ForbiddenError'
+        404:
+          $ref: '#/components/responses/NotFoundImage'
+
+  /images/{imageId}/verification:
+    get:
+      tags: [Verification]
+      summary: 블록체인 검증 조회
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: imageId
+          in: path
+          required: true
+          schema:
+            type: integer
+          example: 101
+      responses:
+        200:
+          description: 검증 정보
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  imageId:
+                    type: integer
+                  verificationStatus:
+                    type: string
+                  imageHash:
+                    type: string
+                  txHash:
+                    type: string
+                  blockNumber:
+                    type: integer
+                  contractAddress:
+                    type: string
+                  registeredAt:
+                    type: string
+                    format: date-time
+              example:
+                imageId: 101
+                verificationStatus: "VERIFIED"
+                imageHash: "0x8f12ab34cd56ef"
+                txHash: "0xa12345bcd67890"
+                blockNumber: 245
+                contractAddress: "0x9876543210abcdef"
+                registeredAt: "2026-03-29T14:31:10Z"
+        401:
+          $ref: '#/components/responses/UnauthorizedError'
+        403:
+          $ref: '#/components/responses/ForbiddenError'
+        404:
+          $ref: '#/components/responses/NotFound'
+
+  /verification/check:
+    post:
+      tags: [Verification]
+      summary: 이미지 파일 검증
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [image]
+              properties:
+                image:
+                  type: string
+                  format: binary
+      responses:
+        200:
+          description: 검증 결과 반환
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  isVerified:
+                    type: boolean
+                  verificationStatus:
+                    type: string
+                    enum: [MATCHED, NOT_MATCHED]
+                  imageId:
+                    type: integer
+                    nullable: true
+                  imageHash:
+                    type: string
+                  txHash:
+                    type: string
+                    nullable: true
+                  reason:
+                    type: string
+                    nullable: true
+
+              examples:
+                matched:
+                  summary: 일치
+                  value:
+                    isVerified: true
+                    verificationStatus: "MATCHED"
+                    imageId: 101
+                    imageHash: "0x8f12ab34cd56ef"
+                    txHash: "0xa12345bcd67890"
+
+                notMatched:
+                  summary: 불일치
+                  value:
+                    isVerified: false
+                    verificationStatus: "NOT_MATCHED"
+                    imageHash: "0x999999999999"
+                    reason: "블록체인에 등록된 원본 해시와 일치하지 않습니다."
+        401:
+          $ref: '#/components/responses/UnauthorizedError'
+        403:
+          $ref: '#/components/responses/ForbiddenError'
+        404:
+          $ref: '#/components/responses/NotFound'
+
+  /orders:
+    post:
+      tags: [Market]
+      summary: 이미지 구매 주문 생성
+      security:
+        - bearerAuth: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [imageId, paymentMethod]
+              properties:
+                imageId:
+                  type: integer
+                paymentMethod:
+                  type: string
+                  enum: [METAMASK]
+            example:
+              imageId: 101
+              paymentMethod: "METAMASK"
+      responses:
+        201:
+          description: 주문 생성 성공
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  orderId:
+                    type: integer
+                  imageId:
+                    type: integer
+                  price:
+                    type: string
+                  currency:
+                    type: string
+                  network:
+                    type: string
+                  orderStatus:
+                    type: string
+                    enum: [PENDING_PAYMENT, COMPLETED, FAILED]
+                  payment:
+                    type: object
+                    properties:
+                      paymentType:
+                        type: string
+                      chainId:
+                        type: integer
+                      toAddress:
+                        type: string
+                      value:
+                        type: string
+                  createdAt:
+                    type: string
+                    format: date-time
+              example:
+                orderId: 9002
+                imageId: 101
+                price: "0.015"
+                currency: "ETH"
+                network: "SEPOLIA"
+                orderStatus: "PENDING_PAYMENT"
+                payment:
+                  paymentType: "ONCHAIN"
+                  chainId: 11155111
+                  toAddress: "0xSellerOrEscrowAddress1234567890"
+                  value: "15000000000000000"
+                createdAt: "2026-04-05T13:10:00Z"
+        401:
+          $ref: '#/components/responses/UnauthorizedError'
+        403:
+          $ref: '#/components/responses/ForbiddenError'
+        404:
+          $ref: '#/components/responses/NotFound'
+
+  /orders/{orderId}/confirm-payment:
+    post:
+      tags: [Market]
+      summary: 온체인 결제 확인
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: integer
+          example: 9002
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [txHash, fromAddress]
+              properties:
+                txHash:
+                  type: string
+                fromAddress:
+                  type: string
+            example:
+              txHash: "0xa1234567890bcdef"
+              fromAddress: "0xBuyerWalletAddress1234567890"
+      responses:
+        200:
+          description: 결제 완료 처리 성공
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  orderId:
+                    type: integer
+                  imageId:
+                    type: integer
+                  orderStatus:
+                    type: string
+                    enum: [PAID]
+                  txHash:
+                    type: string
+                  paidAt:
+                    type: string
+                    format: date-time
+              example:
+                orderId: 9002
+                imageId: 101
+                orderStatus: "PAID"
+                txHash: "0xa1234567890bcdef"
+                paidAt: "2026-04-05T13:12:10Z"
+        401:
+          $ref: '#/components/responses/UnauthorizedError'
+        403:
+          $ref: '#/components/responses/ForbiddenError'
+        404:
+          $ref: '#/components/responses/NotFound'
+
+  /users/me/orders:
+    get:
+      tags: [Market]
+      summary: 내 구매 내역 조회
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          required: true
+          schema:
+            type: integer
+          example: 0
+        - name: size
+          in: query
+          required: true
+          schema:
+            type: integer
+          example: 20
+      responses:
+        200:
+          description: 내 구매 내역 조회 성공
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    orderId:
+                      type: integer
+                    imageId:
+                      type: integer
+                    title:
+                      type: string
+                    thumbnailUrl:
+                      type: string
+                    price:
+                      type: string
+                    currency:
+                      type: string
+                    orderStatus:
+                      type: string
+                      enum: [PENDING_PAYMENT, PAID, FAILED]
+                    txHash:
+                      type: string
+                    purchasedAt:
+                      type: string
+                      format: date-time
+              example:
+                - orderId: 9002
+                  imageId: 101
+                  title: "한강 야경"
+                  thumbnailUrl: "https://cdn.example.com/images/101-thumb.jpg"
+                  price: "0.015"
+                  currency: "ETH"
+                  orderStatus: "PAID"
+                  txHash: "0xa1234567890bcdef"
+                  purchasedAt: "2026-04-05T13:12:10Z"
+        401:
+          $ref: '#/components/responses/UnauthorizedError'
+        403:
+          $ref: '#/components/responses/ForbiddenError'
+        404:
+          $ref: '#/components/responses/NotFoundImage'
+
+  /images/{imageId}/download:
+    post:
+      tags: [Image]
+      summary: 워터마크 이미지 다운로드
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: imageId
+          in: path
+          required: true
+          description: 다운로드할 이미지 ID
+          schema:
+            type: integer
+          example: 101
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [orderId]
+              properties:
+                orderId:
+                  type: integer
+            example:
+              orderId: 9002
+      responses:
+        200:
+          description: 다운로드 URL 생성 성공
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  downloadUrl:
+                    type: string
+                  expiresAt:
+                    type: string
+                    format: date-time
+                  watermark:
+                    type: object
+                    properties:
+                      applied:
+                        type: boolean
+                      text:
+                        type: string
+                      position:
+                        type: string
+                        enum: [top-left, top-right, bottom-left, bottom-right]
+              example:
+                downloadUrl: "https://cdn.example.com/downloads/101-watermarked-22.jpg"
+                expiresAt: "2026-04-05T13:20:00Z"
+                watermark:
+                  applied: true
+                  text: "Purchased by user15"
+                  position: "bottom-right"
+        401:
+          $ref: '#/components/responses/UnauthorizedError'
+        403:
+          $ref: '#/components/responses/ForbiddenError'
+        404:
+          $ref: '#/components/responses/NotFoundImage'
+
+  /images/{imageId}/favorite:
+    post:
+      tags: [Favorite]
+      summary: 이미지 찜 추가
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: imageId
+          in: path
+          required: true
+          schema:
+            type: integer
+          example: 101
+      responses:
+        200:
+          description: 찜 추가 성공
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  imageId:
+                    type: integer
+                  favorited:
+                    type: boolean
+              example:
+                imageId: 101
+                favorited: true
+    delete:
+      tags: [Favorite]
+      summary: 찜 취소
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: imageId
+          in: path
+          required: true
+          schema:
+            type: integer
+          example: 101
+      responses:
+        204:
+          description: 삭제 성공
+        401:
+          $ref: '#/components/responses/UnauthorizedError'
+        403:
+          $ref: '#/components/responses/ForbiddenError'
+        404:
+          $ref: '#/components/responses/NotFound'
+
+  /users/me/favorites:
+    get:
+      tags: [Favorite]
+      summary: 찜 목록 조회
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          required: true
+          schema:
+            type: integer
+          example: 0
+        - name: size
+          in: query
+          required: true
+          schema:
+            type: integer
+          example: 20
+      responses:
+        200:
+          description: 찜 목록 조회 성공
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: integer
+                    title:
+                      type: string
+                    thumbnailUrl:
+                      type: string
+                    price:
+                      type: number
+                    verificationStatus:
+                      type: string
+              example:
+                - id: 101
+                  title: "한강 야경"
+                  thumbnailUrl: "https://cdn.example.com/images/101-thumb.jpg"
+                  price: 5000
+                  verificationStatus: "VERIFIED"
+        401:
+          $ref: '#/components/responses/UnauthorizedError'
+        403:
+          $ref: '#/components/responses/ForbiddenError'
+        404:
+          $ref: '#/components/responses/NotFoundImage'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+  responses:
+    UnauthorizedError:
+      description: 인증 실패
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            message: "인증이 필요합니다."
+    ForbiddenError:
+      description: 권한 없음
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            message: "해당 리소스에 대한 권한이 없습니다."
+    NotFoundImage:
+      description: 이미지 없음
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            message: "이미지를 찾을 수 없습니다."
+    BadRequest:
+      description: 잘못된 요청
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: 리소스를 찾을 수 없음
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            message: "요청한 리소스를 찾을 수 없습니다."
