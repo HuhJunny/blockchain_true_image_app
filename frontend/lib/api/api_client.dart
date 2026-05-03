@@ -3,7 +3,7 @@ import 'package:http/http.dart' as http;
 import 'package:frontend/core/token_storage.dart';
 
 class ApiClient {
-  static const baseUrl = "http://localhost:3000";
+  static const baseUrl = "http://10.0.2.2:4000";
 
   static Future<dynamic> get(String path) async {
     final token = await TokenStorage.getAccessToken();
