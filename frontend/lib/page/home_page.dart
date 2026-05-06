@@ -432,7 +432,7 @@ class _ImageCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Expanded(
-              flex: 6,
+              flex: 5,
               child: Stack(
                 fit: StackFit.expand,
                 children: [
@@ -463,7 +463,7 @@ class _ImageCard extends StatelessWidget {
               ),
             ),
             Expanded(
-              flex: 4,
+              flex: 5,
               child: Padding(
                 padding: const EdgeInsets.all(10),
                 child: Column(
@@ -488,7 +488,7 @@ class _ImageCard extends StatelessWidget {
                         fontSize: 12,
                       ),
                     ),
-                    const Spacer(),
+                    const SizedBox(height: 6),
                     Row(
                       children: [
                         if (item.isFavorite)
