@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:reown_appkit/reown_appkit.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
+import 'home_page.dart';
 
 class TempLoginPage extends StatefulWidget {
   const TempLoginPage({super.key});
@@ -22,38 +23,36 @@ class _TempLoginPageState extends State<TempLoginPage> {
   String? walletAddress;
   String? statusMessage;
 
-static const String sepoliaChain = 'eip155:11155111';
-static const int sepoliaChainId = 11155111;
+  static const String sepoliaChain = 'eip155:11155111';
+  static const int sepoliaChainId = 11155111;
 
-ReownAppKitModalNetworkInfo get sepoliaNetwork {
-  final network = ReownAppKitModalNetworks.getNetworkInfo(
-    'eip155',
-    '11155111',
-  );
+  ReownAppKitModalNetworkInfo get sepoliaNetwork {
+    final network = ReownAppKitModalNetworks.getNetworkInfo(
+      'eip155',
+      '11155111',
+    );
 
-  if (network == null) {
-    throw Exception('Sepolia 네트워크 정보를 찾을 수 없습니다.');
+    if (network == null) {
+      throw Exception('Sepolia 네트워크 정보를 찾을 수 없습니다.');
+    }
+
+    return network;
   }
 
-  return network;
-}
+  Future<void> selectSepolia({bool requestWalletSwitch = false}) async {
+    if (appKitModal == null) return;
 
-Future<void> selectSepolia({
-  bool requestWalletSwitch = false,
-}) async {
-  if (appKitModal == null) return;
+    final sepolia = sepoliaNetwork;
 
-  final sepolia = sepoliaNetwork;
-
-  // 앱 내부 selectedChain을 Sepolia로 변경
-  await appKitModal!.selectChain(sepolia);
-
-  // 이미 지갑이 연결된 상태라면 MetaMask에도 Sepolia 전환 요청
-  if (requestWalletSwitch && isConnected) {
-    await appKitModal!.requestSwitchToChain(sepolia);
+    // 앱 내부 selectedChain을 Sepolia로 변경
     await appKitModal!.selectChain(sepolia);
+
+    // 이미 지갑이 연결된 상태라면 MetaMask에도 Sepolia 전환 요청
+    if (requestWalletSwitch && isConnected) {
+      await appKitModal!.requestSwitchToChain(sepolia);
+      await appKitModal!.selectChain(sepolia);
+    }
   }
-}
 
   // TODO: 백엔드 주소에 맞게 수정
   // Android 에뮬레이터에서 로컬 서버면 http://10.0.2.2:8080
@@ -84,30 +83,23 @@ Future<void> selectSepolia({
           description: 'Blockchain image verification market',
           url: 'https://imagechain.example.com',
           icons: ['https://imagechain.example.com/icon.png'],
-          redirect: Redirect(
-            native: 'imagechain://',
-          ),
+          redirect: Redirect(native: 'imagechain://'),
         ),
         optionalNamespaces: {
           'eip155': RequiredNamespace.fromJson({
-          'chains': [
-            'eip155:11155111',
-          ],
-          'methods': [
-            'personal_sign',
-            'eth_sign',
-            'eth_sendTransaction',
-            'eth_signTransaction',
-            'eth_signTypedData',
-            'eth_signTypedData_v4',
-          ],
-          'events': [
-            'accountsChanged',
-            'chainChanged',
-          ],
-        }),
-      },
-    );
+            'chains': ['eip155:11155111'],
+            'methods': [
+              'personal_sign',
+              'eth_sign',
+              'eth_sendTransaction',
+              'eth_signTransaction',
+              'eth_signTypedData',
+              'eth_signTypedData_v4',
+            ],
+            'events': ['accountsChanged', 'chainChanged'],
+          }),
+        },
+      );
 
       await modal.init();
 
@@ -142,22 +134,22 @@ Future<void> selectSepolia({
   }
 
   String get selectedChainId {
-  return sepoliaChain;
-}
-
-int get chainId {
-  return sepoliaChainId;
-}
-
-String get currentWalletAddress {
-  final address = appKitModal!.session!.getAddress('eip155');
-
-  if (address == null) {
-    throw Exception('EVM 지갑 주소를 찾을 수 없습니다.');
+    return sepoliaChain;
   }
 
-  return address;
-}
+  int get chainId {
+    return sepoliaChainId;
+  }
+
+  String get currentWalletAddress {
+    final address = appKitModal!.session!.getAddress('eip155');
+
+    if (address == null) {
+      throw Exception('EVM 지갑 주소를 찾을 수 없습니다.');
+    }
+
+    return address;
+  }
 
   Future<void> connectWallet() async {
     if (appKitModal == null) {
@@ -169,7 +161,7 @@ String get currentWalletAddress {
 
     try {
       await selectSepolia();
-      
+
       appKitModal!.openModalView();
 
       setState(() {
@@ -203,11 +195,11 @@ String get currentWalletAddress {
 
     const namespace = 'eip155';
 
-final address = appKitModal!.session!.getAddress(namespace);
+    final address = appKitModal!.session!.getAddress(namespace);
 
-if (address == null) {
-  throw Exception('서명에 사용할 지갑 주소를 찾을 수 없습니다.');
-}
+    if (address == null) {
+      throw Exception('서명에 사용할 지갑 주소를 찾을 수 없습니다.');
+    }
 
     final messageBytes = utf8.encode(message);
     final hexMessage = '0x${hex.encode(messageBytes)}';
@@ -217,10 +209,7 @@ if (address == null) {
       chainId: selectedChainId,
       request: SessionRequestParams(
         method: 'personal_sign',
-        params: [
-          hexMessage,
-          address,
-        ],
+        params: [hexMessage, address],
       ),
     );
 
@@ -233,9 +222,7 @@ if (address == null) {
   ) async {
     final response = await http.post(
       Uri.parse('$baseUrl$path'),
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: {'Content-Type': 'application/json'},
       body: jsonEncode(body),
     );
 
@@ -266,19 +253,16 @@ if (address == null) {
 
       final address = currentWalletAddress;
       final currentChainId = chainId;
-      
+
       if (currentChainId != sepoliaChainId) {
         throw Exception('Sepolia 네트워크로 변경해주세요. 현재 chainId: $currentChainId');
       }
 
-      final nonceResponse = await postJson(
-        '/auth/wallet/nonce',
-        {
-          'walletAddress': address,
-          'chainId': currentChainId,
-          'walletType': 'METAMASK',
-        },
-      );
+      final nonceResponse = await postJson('/auth/wallet/nonce', {
+        'walletAddress': address,
+        'chainId': currentChainId,
+        'walletType': 'METAMASK',
+      });
 
       final nonce = nonceResponse['nonce'];
       final message = nonceResponse['message'];
@@ -293,16 +277,13 @@ if (address == null) {
 
       final signature = await signMessage(message);
 
-      final loginResponse = await postJson(
-        '/auth/wallet/login',
-        {
-          'walletAddress': address,
-          'signature': signature,
-          'nonce': nonce,
-          'chainId': currentChainId,
-          'walletType': 'METAMASK',
-        },
-      );
+      final loginResponse = await postJson('/auth/wallet/login', {
+        'walletAddress': address,
+        'signature': signature,
+        'nonce': nonce,
+        'chainId': currentChainId,
+        'walletType': 'METAMASK',
+      });
 
       final prefs = await SharedPreferences.getInstance();
 
@@ -327,9 +308,19 @@ if (address == null) {
       if (isNewUser) {
         // 나중에 회원가입/프로필 입력 페이지가 있으면 그쪽으로 변경
         // Navigator.pushReplacementNamed(context, '/edit-profile');
-        Navigator.pushReplacementNamed(context, '/home');
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (_) => HomePage(appKitModal: appKitModal!),
+          ),
+        );
       } else {
-        Navigator.pushReplacementNamed(context, '/home');
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (_) => HomePage(appKitModal: appKitModal!),
+          ),
+        );
       }
     } catch (e, stackTrace) {
       debugPrint('로그인 실패 오류: $e');
@@ -349,7 +340,7 @@ if (address == null) {
     }
   }
 
-    Future<void> disconnectWallet() async {
+  Future<void> disconnectWallet() async {
     try {
       await appKitModal?.disconnect();
 
@@ -384,267 +375,252 @@ if (address == null) {
   }
 
   @override
-Widget build(BuildContext context) {
-  final connectedText = walletAddress == null
-      ? '연결된 지갑 없음'
-      : shortAddress(walletAddress!);
+  Widget build(BuildContext context) {
+    final connectedText = walletAddress == null
+        ? '연결된 지갑 없음'
+        : shortAddress(walletAddress!);
 
-  return Scaffold(
-    backgroundColor: Colors.white,
-    body: SafeArea(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(16, 20, 16, 28),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                InkWell(
-                  borderRadius: BorderRadius.circular(14),
-                  onTap: goToHomeWithoutWallet,
-                  child: Container(
-                    width: 48,
-                    height: 48,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFF3F4F6),
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    child: const Icon(
-                      Icons.account_balance_wallet_outlined,
-                      color: Colors.black87,
-                      size: 26,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                const Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Wallet Login',
-                        style: TextStyle(
-                          fontSize: 22,
-                          fontWeight: FontWeight.w800,
-                          color: Colors.black,
-                        ),
-                      ),
-                      SizedBox(height: 2),
-                      Text(
-                        'MetaMask 지갑 연결',
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: Colors.black54,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-
-            const SizedBox(height: 24),
-
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: const Color(0xFFF3F4F6),
-                borderRadius: BorderRadius.circular(18),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+    return Scaffold(
+      backgroundColor: Colors.white,
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(16, 20, 16, 28),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
                 children: [
-                  const Icon(
-                    Icons.verified_user_outlined,
-                    size: 42,
-                    color: Colors.black87,
-                  ),
-                  const SizedBox(height: 16),
-                  const Text(
-                    'Block Snap 지갑 인증',
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w800,
-                      color: Colors.black,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    '이미지 등록과 검증 기능을 사용하기 위해 MetaMask 지갑을 연결합니다.',
-                    style: TextStyle(
-                      fontSize: 13,
-                      height: 1.5,
-                      color: Colors.black54,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 12,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(
-                        color: const Color(0xFFE5E7EB),
+                  InkWell(
+                    borderRadius: BorderRadius.circular(14),
+                    onTap: goToHomeWithoutWallet,
+                    child: Container(
+                      width: 48,
+                      height: 48,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF3F4F6),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: const Icon(
+                        Icons.account_balance_wallet_outlined,
+                        color: Colors.black87,
+                        size: 26,
                       ),
                     ),
-                    child: Row(
+                  ),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Icon(
-                          walletAddress == null
-                              ? Icons.link_off
-                              : Icons.link,
-                          size: 20,
-                          color: walletAddress == null
-                              ? Colors.black45
-                              : Colors.blue,
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Text(
-                            walletAddress == null
-                                ? '지갑이 아직 연결되지 않았습니다.'
-                                : '연결된 지갑: $connectedText',
-                            style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                              color: walletAddress == null
-                                  ? Colors.black54
-                                  : Colors.black87,
-                            ),
-                            overflow: TextOverflow.ellipsis,
+                        Text(
+                          'Wallet Login',
+                          style: TextStyle(
+                            fontSize: 22,
+                            fontWeight: FontWeight.w800,
+                            color: Colors.black,
                           ),
+                        ),
+                        SizedBox(height: 2),
+                        Text(
+                          'MetaMask 지갑 연결',
+                          style: TextStyle(fontSize: 13, color: Colors.black54),
                         ),
                       ],
                     ),
                   ),
                 ],
               ),
-            ),
 
-            const SizedBox(height: 24),
+              const SizedBox(height: 24),
 
-            SizedBox(
-              width: double.infinity,
-              height: 52,
-              child: FilledButton.icon(
-                onPressed: isInitializing ? null : connectWallet,
-                icon: const Icon(Icons.account_balance_wallet_outlined),
-                label: Text(
-                  isInitializing ? '초기화 중...' : 'MetaMask 지갑 연결',
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF3F4F6),
+                  borderRadius: BorderRadius.circular(18),
                 ),
-                style: FilledButton.styleFrom(
-                  backgroundColor: Colors.black,
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Icon(
+                      Icons.verified_user_outlined,
+                      size: 42,
+                      color: Colors.black87,
+                    ),
+                    const SizedBox(height: 16),
+                    const Text(
+                      'Block Snap 지갑 인증',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.black,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      '이미지 등록과 검증 기능을 사용하기 위해 MetaMask 지갑을 연결합니다.',
+                      style: TextStyle(
+                        fontSize: 13,
+                        height: 1.5,
+                        color: Colors.black54,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 12,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: const Color(0xFFE5E7EB)),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            walletAddress == null ? Icons.link_off : Icons.link,
+                            size: 20,
+                            color: walletAddress == null
+                                ? Colors.black45
+                                : Colors.blue,
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              walletAddress == null
+                                  ? '지갑이 아직 연결되지 않았습니다.'
+                                  : '연결된 지갑: $connectedText',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: walletAddress == null
+                                    ? Colors.black54
+                                    : Colors.black87,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
               ),
-            ),
 
-            const SizedBox(height: 12),
+              const SizedBox(height: 24),
 
-            Row(
-              children: [
-                Expanded(
-                  child: SizedBox(
-                    height: 52,
-                    child: OutlinedButton(
-                      onPressed: refreshWalletState,
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.black87,
-                        side: const BorderSide(
-                          color: Color(0xFFE5E7EB),
-                        ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      child: const Text('상태 확인'),
+              SizedBox(
+                width: double.infinity,
+                height: 52,
+                child: FilledButton.icon(
+                  onPressed: isInitializing ? null : connectWallet,
+                  icon: const Icon(Icons.account_balance_wallet_outlined),
+                  label: Text(isInitializing ? '초기화 중...' : 'MetaMask 지갑 연결'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: Colors.black,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
                     ),
                   ),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: SizedBox(
-                    height: 52,
-                    child: OutlinedButton(
-                      onPressed: disconnectWallet,
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.black87,
-                        side: const BorderSide(
-                          color: Color(0xFFE5E7EB),
+              ),
+
+              const SizedBox(height: 12),
+
+              Row(
+                children: [
+                  Expanded(
+                    child: SizedBox(
+                      height: 52,
+                      child: OutlinedButton(
+                        onPressed: refreshWalletState,
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.black87,
+                          side: const BorderSide(color: Color(0xFFE5E7EB)),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
                         ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
+                        child: const Text('상태 확인'),
                       ),
-                      child: const Text('연결 해제'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: SizedBox(
+                      height: 52,
+                      child: OutlinedButton(
+                        onPressed: disconnectWallet,
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.black87,
+                          side: const BorderSide(color: Color(0xFFE5E7EB)),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        child: const Text('연결 해제'),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+
+              const SizedBox(height: 12),
+
+              SizedBox(
+                width: double.infinity,
+                height: 52,
+                child: FilledButton(
+                  onPressed: isLoading ? null : loginWithWallet,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: Colors.black,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: isLoading
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Text('지갑으로 로그인'),
+                ),
+              ),
+
+              if (statusMessage != null) ...[
+                const SizedBox(height: 20),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF9FAFB),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: const Color(0xFFE5E7EB)),
+                  ),
+                  child: Text(
+                    statusMessage!,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      height: 1.5,
+                      color: Colors.black87,
                     ),
                   ),
                 ),
               ],
-            ),
-
-            const SizedBox(height: 12),
-
-            SizedBox(
-              width: double.infinity,
-              height: 52,
-              child: FilledButton(
-                onPressed: isLoading ? null : loginWithWallet,
-                style: FilledButton.styleFrom(
-                  backgroundColor: Colors.black,
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-                child: isLoading
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
-                      )
-                    : const Text('지갑으로 로그인'),
-              ),
-            ),
-
-            if (statusMessage != null) ...[
-              const SizedBox(height: 20),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF9FAFB),
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(
-                    color: const Color(0xFFE5E7EB),
-                  ),
-                ),
-                child: Text(
-                  statusMessage!,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    fontSize: 13,
-                    height: 1.5,
-                    color: Colors.black87,
-                  ),
-                ),
-              ),
             ],
-          ],
+          ),
         ),
       ),
-    ),
-  );
-}
+    );
+  }
 }

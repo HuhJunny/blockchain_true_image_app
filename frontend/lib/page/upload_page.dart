@@ -1,14 +1,20 @@
 import 'dart:typed_data';
+import 'dart:convert';
+import 'package:convert/convert.dart';
 
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:reown_appkit/reown_appkit.dart';
 
 class UploadPage extends StatefulWidget {
   final bool openCameraOnStart;
 
+  final ReownAppKitModal appKitModal;
+
   const UploadPage({
     super.key,
     this.openCameraOnStart = false,
+    required this.appKitModal,
   });
 
   @override
@@ -24,6 +30,8 @@ class _UploadPageState extends State<UploadPage> {
 
   Uint8List? _imageBytes;
   XFile? _pickedImage;
+
+  ReownAppKitModal get appKitModal => widget.appKitModal;
 
   String _selectedCategory = 'LANDSCAPE';
   final String _deviceId = 'device-abc-123';
@@ -87,9 +95,7 @@ class _UploadPageState extends State<UploadPage> {
       context: context,
       backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(
-          top: Radius.circular(18),
-        ),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
       ),
       builder: (context) {
         return SafeArea(
@@ -131,51 +137,64 @@ class _UploadPageState extends State<UploadPage> {
     );
   }
 
-  void _uploadAndRegister() {
+  String get walletAddress => appKitModal.session!.getAddress('eip155')!;
+
+  Future<void> _uploadAndRegister() async {
     if (_pickedImage == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('먼저 사진을 촬영하거나 선택해주세요.'),
-        ),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('이미지 선택 필요')));
       return;
     }
 
-    if (_titleController.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Image Title을 입력해주세요.'),
+    try {
+      final from = walletAddress;
+
+      // 🔥 테스트용 hash
+      final imageHash = "123456";
+
+      final data = buildRegisterImageData(imageHash, 1000);
+
+      final result = await appKitModal.request(
+        topic: appKitModal.session!.topic,
+        chainId: 'eip155:11155111',
+        request: SessionRequestParams(
+          method: 'eth_sendTransaction',
+          params: [
+            {
+              "from": from,
+              "to": "0x6154ab54f64106e00C715EBfC7cE6ce8C5dfF9CB",
+              "data": data,
+              "value": "0x0",
+            },
+          ],
         ),
       );
-      return;
+
+      print("🔥 TX HASH: $result");
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('성공: $result')));
+    } catch (e) {
+      print("❌ ERROR: $e");
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('실패: $e')));
     }
+  }
 
-    final uploadData = {
-      'imageName': _pickedImage!.name,
-      'imageTitle': _titleController.text.trim(),
-      'description': _descriptionController.text.trim(),
-      'price': _priceController.text.trim(),
-      'category': _selectedCategory,
-      'deviceId': _deviceId,
-      'capturedAt': _capturedAt,
-    };
+  String buildRegisterImageData(String hash, int price) {
+    const selector = "0x3c2c2a3a";
 
-    debugPrint('업로드 데이터: $uploadData');
+    final hashBytes = utf8.encode(hash);
+    final hashHex = hex.encode(hashBytes);
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Upload & Register on Blockchain 기능 연결 예정'),
-      ),
-    );
+    final hashEncoded = hashHex.padRight(64, '0');
+    final priceHex = price.toRadixString(16).padLeft(64, '0');
 
-    /*
-      이후 이 위치에서 처리할 흐름:
-
-      1. 이미지 파일 서버 업로드
-      2. 서버에서 SHA-256 / pHash 생성
-      3. 서버 또는 프론트에서 블록체인 트랜잭션 요청
-      4. txHash, imageHash, deviceId, capturedAt 등을 DB에 저장
-    */
+    return selector + hashEncoded + priceHex;
   }
 
   @override
@@ -189,9 +208,7 @@ class _UploadPageState extends State<UploadPage> {
         elevation: 0,
         title: const Text(
           'Upload',
-          style: TextStyle(
-            fontWeight: FontWeight.w700,
-          ),
+          style: TextStyle(fontWeight: FontWeight.w700),
         ),
       ),
 
@@ -201,10 +218,7 @@ class _UploadPageState extends State<UploadPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const _UserHeader(
-                name: 'John Doe',
-                email: 'JohnDoe@gmail.com',
-              ),
+              const _UserHeader(name: 'John Doe', email: 'JohnDoe@gmail.com'),
 
               const SizedBox(height: 20),
 
@@ -217,9 +231,7 @@ class _UploadPageState extends State<UploadPage> {
                   decoration: BoxDecoration(
                     color: const Color(0xFFF3F4F6),
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                      color: const Color(0xFFE5E7EB),
-                    ),
+                    border: Border.all(color: const Color(0xFFE5E7EB)),
                   ),
                   child: _imageBytes == null
                       ? const Column(
@@ -333,17 +345,11 @@ class _UploadPageState extends State<UploadPage> {
 
               const SizedBox(height: 24),
 
-              _ReadOnlyField(
-                label: 'Device ID',
-                value: _deviceId,
-              ),
+              _ReadOnlyField(label: 'Device ID', value: _deviceId),
 
               const SizedBox(height: 18),
 
-              _ReadOnlyField(
-                label: 'Captured At',
-                value: _capturedAt,
-              ),
+              _ReadOnlyField(label: 'Captured At', value: _capturedAt),
 
               const SizedBox(height: 28),
 
@@ -380,10 +386,7 @@ class _UserHeader extends StatelessWidget {
   final String name;
   final String email;
 
-  const _UserHeader({
-    required this.name,
-    required this.email,
-  });
+  const _UserHeader({required this.name, required this.email});
 
   @override
   Widget build(BuildContext context) {
@@ -392,10 +395,7 @@ class _UserHeader extends StatelessWidget {
         const CircleAvatar(
           radius: 22,
           backgroundColor: Color(0xFFE5E7EB),
-          child: Icon(
-            Icons.person,
-            color: Colors.black87,
-          ),
+          child: Icon(Icons.person, color: Colors.black87),
         ),
         const SizedBox(width: 12),
         Expanded(
@@ -417,10 +417,7 @@ class _UserHeader extends StatelessWidget {
                 email,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Colors.black54,
-                  fontSize: 12,
-                ),
+                style: const TextStyle(color: Colors.black54, fontSize: 12),
               ),
             ],
           ),
@@ -464,20 +461,12 @@ class _InputField extends StatelessWidget {
           keyboardType: keyboardType,
           decoration: InputDecoration(
             hintText: hintText,
-            hintStyle: const TextStyle(
-              color: Color(0xFF928B8B),
-              fontSize: 16,
-            ),
+            hintStyle: const TextStyle(color: Color(0xFF928B8B), fontSize: 16),
             enabledBorder: const UnderlineInputBorder(
-              borderSide: BorderSide(
-                color: Color(0xFFE6E6E6),
-              ),
+              borderSide: BorderSide(color: Color(0xFFE6E6E6)),
             ),
             focusedBorder: const UnderlineInputBorder(
-              borderSide: BorderSide(
-                color: Colors.black,
-                width: 1.2,
-              ),
+              borderSide: BorderSide(color: Colors.black, width: 1.2),
             ),
           ),
         ),
@@ -490,10 +479,7 @@ class _ReadOnlyField extends StatelessWidget {
   final String label;
   final String value;
 
-  const _ReadOnlyField({
-    required this.label,
-    required this.value,
-  });
+  const _ReadOnlyField({required this.label, required this.value});
 
   @override
   Widget build(BuildContext context) {
@@ -513,18 +499,11 @@ class _ReadOnlyField extends StatelessWidget {
           width: double.infinity,
           padding: const EdgeInsets.only(bottom: 10),
           decoration: const BoxDecoration(
-            border: Border(
-              bottom: BorderSide(
-                color: Color(0xFFE6E6E6),
-              ),
-            ),
+            border: Border(bottom: BorderSide(color: Color(0xFFE6E6E6))),
           ),
           child: Text(
             value,
-            style: const TextStyle(
-              color: Color(0xFF928B8B),
-              fontSize: 16,
-            ),
+            style: const TextStyle(color: Color(0xFF928B8B), fontSize: 16),
           ),
         ),
       ],

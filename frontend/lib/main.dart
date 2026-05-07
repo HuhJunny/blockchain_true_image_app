@@ -17,17 +17,12 @@ class MyApp extends StatelessWidget {
       theme: ThemeData(
         useMaterial3: true,
         scaffoldBackgroundColor: Colors.white,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.black,
-        ),
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.black),
       ),
-       // 앱 시작 화면을 임시 로그인 페이지로 설정
+      // 앱 시작 화면을 임시 로그인 페이지로 설정
       initialRoute: '/login',
 
-      routes: {
-        '/login': (context) => const TempLoginPage(),
-        '/home': (context) => const HomePage(),
-      },
+      routes: {'/login': (context) => const TempLoginPage()},
     );
   }
 }

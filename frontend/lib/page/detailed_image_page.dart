@@ -1,19 +1,15 @@
 import 'package:flutter/material.dart';
+import '../api/image_api.dart';
 
 class DetailedImagePage extends StatelessWidget {
   final ImageDetailInfo image;
 
-  const DetailedImagePage({
-    super.key,
-    required this.image,
-  });
+  const DetailedImagePage({super.key, required this.image});
 
   void _checkVerification(BuildContext context) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('${image.title} 검증 정보 확인 기능 연결 예정'),
-      ),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('${image.title} 검증 정보 확인 기능 연결 예정')));
   }
 
   void _deleteImage(BuildContext context) {
@@ -35,14 +31,10 @@ class DetailedImagePage extends StatelessWidget {
                 Navigator.pop(context);
 
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('이미지 삭제 기능 연결 예정'),
-                  ),
+                  const SnackBar(content: Text('이미지 삭제 기능 연결 예정')),
                 );
               },
-              style: FilledButton.styleFrom(
-                backgroundColor: Colors.red,
-              ),
+              style: FilledButton.styleFrom(backgroundColor: Colors.red),
               child: const Text('Delete'),
             ),
           ],
@@ -53,7 +45,8 @@ class DetailedImagePage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final verificationText = '''
+    final verificationText =
+        '''
 Status: ${image.status}
 Category: ${image.category}
 Image Hash: ${image.imageHash}
@@ -71,15 +64,10 @@ Block Number: ${image.blockNumber}
         elevation: 0,
         title: const Text(
           'Image Detail',
-          style: TextStyle(
-            fontWeight: FontWeight.w700,
-          ),
+          style: TextStyle(fontWeight: FontWeight.w700),
         ),
         actions: [
-          IconButton(
-            onPressed: () {},
-            icon: const Icon(Icons.more_horiz),
-          ),
+          IconButton(onPressed: () {}, icon: const Icon(Icons.more_horiz)),
         ],
       ),
       body: SafeArea(
@@ -94,18 +82,13 @@ Block Number: ${image.blockNumber}
                 decoration: BoxDecoration(
                   color: const Color(0xFFF3F4F6),
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: const Color(0xFFE5E7EB),
-                  ),
+                  border: Border.all(color: const Color(0xFFE5E7EB)),
                 ),
                 child: const Center(
                   child: Text(
                     'Original Image Preview',
                     textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: Colors.black87,
-                      fontSize: 13,
-                    ),
+                    style: TextStyle(color: Colors.black87, fontSize: 13),
                   ),
                 ),
               ),
@@ -188,9 +171,7 @@ Block Number: ${image.blockNumber}
                 decoration: BoxDecoration(
                   color: const Color(0xFFF0F0F0),
                   borderRadius: BorderRadius.circular(10),
-                  border: Border.all(
-                    color: const Color(0xFFBABABA),
-                  ),
+                  border: Border.all(color: const Color(0xFFBABABA)),
                 ),
                 child: Text(
                   verificationText.trim(),
@@ -211,19 +192,14 @@ Block Number: ${image.blockNumber}
                       onPressed: () => _checkVerification(context),
                       style: OutlinedButton.styleFrom(
                         padding: const EdgeInsets.symmetric(vertical: 14),
-                        side: const BorderSide(
-                          color: Color(0xFF959595),
-                        ),
+                        side: const BorderSide(color: Color(0xFF959595)),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(10),
                         ),
                       ),
                       child: const Text(
                         'Check Verification',
-                        style: TextStyle(
-                          color: Colors.black,
-                          fontSize: 14,
-                        ),
+                        style: TextStyle(color: Colors.black, fontSize: 14),
                       ),
                     ),
                   ),
@@ -240,10 +216,7 @@ Block Number: ${image.blockNumber}
                       ),
                       child: const Text(
                         'Delete Image',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 14,
-                        ),
+                        style: TextStyle(color: Colors.white, fontSize: 14),
                       ),
                     ),
                   ),
@@ -254,6 +227,67 @@ Block Number: ${image.blockNumber}
         ),
       ),
     );
+  }
+}
+
+class DetailedImagePageWrapper extends StatefulWidget {
+  final int id;
+
+  const DetailedImagePageWrapper({super.key, required this.id});
+
+  @override
+  State<DetailedImagePageWrapper> createState() =>
+      _DetailedImagePageWrapperState();
+}
+
+class _DetailedImagePageWrapperState extends State<DetailedImagePageWrapper> {
+  ImageDetailInfo? image;
+  bool isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDetail();
+  }
+
+  Future<void> _loadDetail() async {
+    try {
+      final res = await ImageApi.getDetail(widget.id);
+
+      setState(() {
+        image = ImageDetailInfo(
+          title: res["title"],
+          seller: res["seller"]?["nickname"] ?? "Unknown",
+          price: "\$ ${res["price"] ?? 0}",
+          saleStatus: res["isSold"] == true ? "SOLD" : "판매중",
+          description: res["description"] ?? "",
+          status: res["verification"]?["status"] ?? "UNKNOWN",
+          category: res["category"] ?? "",
+          imageHash: res["verification"]?["imageHash"] ?? "",
+          deviceId: res["verification"]?["deviceId"] ?? "",
+          timestamp: res["verification"]?["timestamp"] ?? "",
+          txHash: res["verification"]?["txHash"] ?? "",
+          blockNumber: "${res["verification"]?["blockNumber"] ?? ""}",
+        );
+        isLoading = false;
+      });
+    } catch (e) {
+      print("Detail error: $e");
+      setState(() => isLoading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (isLoading) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+
+    if (image == null) {
+      return const Scaffold(body: Center(child: Text("데이터 없음")));
+    }
+
+    return DetailedImagePage(image: image!);
   }
 }
 
