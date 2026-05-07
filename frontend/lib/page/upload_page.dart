@@ -150,14 +150,17 @@ class _UploadPageState extends State<UploadPage> {
     try {
       final from = walletAddress;
 
-      // 🔥 테스트용 hash
+      // 테스트용 hash
       final imageHash = "123456";
 
-      final data = buildRegisterImageData(imageHash, 1000);
+      final data =
+          "0x8f91ad9d000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000038d7ea4c6800000000000000000000000000000000000000000000000000000000000000000063132333435360000000000000000000000000000000000000000000000000000";
 
       final result = await appKitModal.request(
         topic: appKitModal.session!.topic,
-        chainId: 'eip155:11155111',
+        // 여기도 temp_login_page.dart와 같은 이유로 대체
+        // chainId: 'eip155:11155111',
+        chainId: 'eip155:1',
         request: SessionRequestParams(
           method: 'eth_sendTransaction',
           params: [
@@ -171,13 +174,13 @@ class _UploadPageState extends State<UploadPage> {
         ),
       );
 
-      print("🔥 TX HASH: $result");
+      print("TX HASH: $result");
 
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('성공: $result')));
     } catch (e) {
-      print("❌ ERROR: $e");
+      print("ERROR: $e");
 
       ScaffoldMessenger.of(
         context,

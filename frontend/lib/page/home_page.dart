@@ -4,9 +4,11 @@ import 'upload_page.dart';
 import 'my_gallery_page.dart';
 import 'gallery_page.dart';
 import 'detailed_image_page.dart';
+import 'package:reown_appkit/reown_appkit.dart';
 
 class HomePage extends StatefulWidget {
-  const HomePage({super.key});
+  final ReownAppKitModal appKitModal;
+  const HomePage({super.key, required this.appKitModal});
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -50,36 +52,32 @@ class _HomePageState extends State<HomePage> {
     final pages = [
       _HomeContent(
         items: _items,
-          onOpenUpload: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (context) => const UploadPage(
-                  openCameraOnStart: true,
-                ),
+        onOpenUpload: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => UploadPage(
+                openCameraOnStart: true,
+                appKitModal: widget.appKitModal,
               ),
-            );
-          },
-          onOpenGallery: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (context) => const GalleryPage(), 
-              ),
-            );
-          },
-        ),
-        const SizedBox.shrink(),
-        const MyGalleryPage(),
-        const UserInfoPage(),
-      ];
+            ),
+          );
+        },
+        onOpenGallery: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (context) => const GalleryPage()),
+          );
+        },
+      ),
+      const SizedBox.shrink(),
+      const MyGalleryPage(),
+      const UserInfoPage(),
+    ];
 
     return Scaffold(
       body: SafeArea(
-        child: IndexedStack(
-          index: _selectedIndex,
-          children: pages,
-        ),
+        child: IndexedStack(index: _selectedIndex, children: pages),
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _selectedIndex,
@@ -88,16 +86,17 @@ class _HomePageState extends State<HomePage> {
             Navigator.push(
               context,
               MaterialPageRoute(
-                builder: (context) => const UploadPage(
-                openCameraOnStart: true,
+                builder: (context) => UploadPage(
+                  openCameraOnStart: true,
+                  appKitModal: widget.appKitModal,
+                ),
               ),
-            ),
-          );
-          return;
-        }
+            );
+            return;
+          }
 
-        setState(() => _selectedIndex = index);
-      },
+          setState(() => _selectedIndex = index);
+        },
         destinations: const [
           NavigationDestination(
             icon: Icon(Icons.home_outlined),
@@ -143,10 +142,7 @@ class _HomeContent extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const _UserHeader(
-            name: 'John Doe',
-            email: 'JohnDoe@gmail.com',
-          ),
+          const _UserHeader(name: 'John Doe', email: 'JohnDoe@gmail.com'),
           const SizedBox(height: 20),
 
           Row(
@@ -191,10 +187,7 @@ class _HomeContent extends StatelessWidget {
             children: [
               const Text(
                 'Recent Images',
-                style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w700,
-                ),
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
               ),
               TextButton(
                 onPressed: onOpenGallery,
@@ -210,8 +203,8 @@ class _HomeContent extends StatelessWidget {
               final crossAxisCount = width >= 700
                   ? 4
                   : width >= 520
-                      ? 3
-                      : 2;
+                  ? 3
+                  : 2;
 
               return GridView.builder(
                 itemCount: items.length,
@@ -239,10 +232,7 @@ class _UserHeader extends StatelessWidget {
   final String name;
   final String email;
 
-  const _UserHeader({
-    required this.name,
-    required this.email,
-  });
+  const _UserHeader({required this.name, required this.email});
 
   @override
   Widget build(BuildContext context) {
@@ -251,10 +241,7 @@ class _UserHeader extends StatelessWidget {
         const CircleAvatar(
           radius: 24,
           backgroundColor: Color(0xFFE5E7EB),
-          child: Icon(
-            Icons.person,
-            color: Colors.black87,
-          ),
+          child: Icon(Icons.person, color: Colors.black87),
         ),
         const SizedBox(width: 12),
         Expanded(
@@ -276,10 +263,7 @@ class _UserHeader extends StatelessWidget {
                 email,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Colors.black54,
-                  fontSize: 13,
-                ),
+                style: const TextStyle(color: Colors.black54, fontSize: 13),
               ),
             ],
           ),
@@ -348,10 +332,7 @@ class _HeroCarouselState extends State<_HeroCarousel> {
                     const Text(
                       '이미지 등록, 검증, 갤러리 확인을 한 화면에서 시작할 수 있습니다.',
                       textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: Colors.black54,
-                        fontSize: 13,
-                      ),
+                      style: TextStyle(color: Colors.black54, fontSize: 13),
                     ),
                   ],
                 ),
@@ -390,30 +371,28 @@ class _HeroCarouselState extends State<_HeroCarousel> {
 class _ImageCard extends StatelessWidget {
   final ImageItem item;
 
-  const _ImageCard({
-    required this.item,
-  });
+  const _ImageCard({required this.item});
 
   @override
   Widget build(BuildContext context) {
     return InkWell(
       borderRadius: BorderRadius.circular(14),
       onTap: () {
-      Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => DetailedImagePage(
-          image: ImageDetailInfo.sample(
-            title: item.title,
-            description: item.description,
-            status: item.verified ? 'Verified' : 'Pending',
-            category: item.category.toUpperCase(),
-            timestamp: '${item.uploadedAt}T14:31:10Z',
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => DetailedImagePage(
+              image: ImageDetailInfo.sample(
+                title: item.title,
+                description: item.description,
+                status: item.verified ? 'Verified' : 'Pending',
+                category: item.category.toUpperCase(),
+                timestamp: '${item.uploadedAt}T14:31:10Z',
+              ),
+            ),
           ),
-        ),
-      ),
-    );
-  },
+        );
+      },
       child: Container(
         clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(
@@ -521,27 +500,19 @@ class _ImageCard extends StatelessWidget {
 class _CategoryBadge extends StatelessWidget {
   final String text;
 
-  const _CategoryBadge({
-    required this.text,
-  });
+  const _CategoryBadge({required this.text});
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: 8,
-        vertical: 4,
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(99),
       ),
       child: Text(
         text,
-        style: const TextStyle(
-          fontSize: 11,
-          fontWeight: FontWeight.w600,
-        ),
+        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
       ),
     );
   }
@@ -550,9 +521,7 @@ class _CategoryBadge extends StatelessWidget {
 class _VerifyBadge extends StatelessWidget {
   final bool verified;
 
-  const _VerifyBadge({
-    required this.verified,
-  });
+  const _VerifyBadge({required this.verified});
 
   @override
   Widget build(BuildContext context) {
@@ -563,8 +532,6 @@ class _VerifyBadge extends StatelessWidget {
     );
   }
 }
-
-
 
 class _SimplePage extends StatelessWidget {
   final String title;
@@ -585,27 +552,17 @@ class _SimplePage extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(
-              icon,
-              size: 56,
-              color: Colors.black87,
-            ),
+            Icon(icon, size: 56, color: Colors.black87),
             const SizedBox(height: 16),
             Text(
               title,
-              style: const TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.w800,
-              ),
+              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800),
             ),
             const SizedBox(height: 8),
             Text(
               message,
               textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: Colors.black54,
-                fontSize: 14,
-              ),
+              style: const TextStyle(color: Colors.black54, fontSize: 14),
             ),
           ],
         ),

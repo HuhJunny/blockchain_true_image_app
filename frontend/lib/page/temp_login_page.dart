@@ -23,13 +23,20 @@ class _TempLoginPageState extends State<TempLoginPage> {
   String? walletAddress;
   String? statusMessage;
 
-  static const String sepoliaChain = 'eip155:11155111';
-  static const int sepoliaChainId = 11155111;
+  // 원래 세폴리아 체인 ID는 eip155:11155111
+  // 그러나 현재 메타마스크가 세폴리아 테스트넷을 승인하지 않는 상황
+  // Mainnet 체인 ID로 임시 접속
+  // 이후 코드에도 전부 대체해 놓음
+  // static const String sepoliaChain = 'eip155:11155111';
+  // static const int sepoliaChainId = 11155111;
+  static const String sepoliaChain = 'eip155:1';
+  static const int sepoliaChainId = 1;
 
   ReownAppKitModalNetworkInfo get sepoliaNetwork {
     final network = ReownAppKitModalNetworks.getNetworkInfo(
       'eip155',
-      '11155111',
+      // '11155111',
+      '1',
     );
 
     if (network == null) {
@@ -55,9 +62,10 @@ class _TempLoginPageState extends State<TempLoginPage> {
   }
 
   // TODO: 백엔드 주소에 맞게 수정
-  // Android 에뮬레이터에서 로컬 서버면 http://10.0.2.2:8080
-  // Chrome에서 로컬 서버면 http://localhost:8080
-  static const String baseUrl = 'http://localhost:8080';
+  // Android 에뮬레이터에서 로컬 서버면 http://10.0.2.2:4000
+  // Chrome에서 로컬 서버면 http://localhost:4000
+  // 개인 모바일 기기 연결해서 하는 경우면 ipconfig 쳐서 나오는 WiFi IPv4 주소:4000
+  static const String baseUrl = 'http://:4000';
 
   @override
   void initState() {
@@ -87,7 +95,8 @@ class _TempLoginPageState extends State<TempLoginPage> {
         ),
         optionalNamespaces: {
           'eip155': RequiredNamespace.fromJson({
-            'chains': ['eip155:11155111'],
+            // 'chains': ['eip155:11155111'],
+            'chains': ['eip155:1'],
             'methods': [
               'personal_sign',
               'eth_sign',
@@ -105,7 +114,8 @@ class _TempLoginPageState extends State<TempLoginPage> {
 
       final sepolia = ReownAppKitModalNetworks.getNetworkInfo(
         'eip155',
-        '11155111',
+        // '11155111',
+        '1',
       );
 
       if (sepolia != null) {
@@ -366,7 +376,12 @@ class _TempLoginPageState extends State<TempLoginPage> {
   }
 
   void goToHomeWithoutWallet() {
-    Navigator.pushReplacementNamed(context, '/home');
+    if (appKitModal == null) return;
+
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (_) => HomePage(appKitModal: appKitModal!)),
+    );
   }
 
   String shortAddress(String address) {
