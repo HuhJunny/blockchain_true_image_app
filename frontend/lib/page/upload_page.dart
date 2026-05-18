@@ -1,14 +1,19 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:convert/convert.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:reown_appkit/reown_appkit.dart';
 
 class UploadPage extends StatefulWidget {
   final bool openCameraOnStart;
+  final ReownAppKitModal? appKitModal;
 
   const UploadPage({
     super.key,
     this.openCameraOnStart = false,
+    this.appKitModal,
   });
 
   @override
@@ -16,6 +21,10 @@ class UploadPage extends StatefulWidget {
 }
 
 class _UploadPageState extends State<UploadPage> {
+  static const String _sepoliaChain = 'eip155:11155111';
+  static const String _contractAddress =
+      '0x6154ab54f64106e00C715EBfC7cE6ce8C5dfF9CB';
+
   final ImagePicker _picker = ImagePicker();
 
   final TextEditingController _titleController = TextEditingController();
@@ -24,6 +33,7 @@ class _UploadPageState extends State<UploadPage> {
 
   Uint8List? _imageBytes;
   XFile? _pickedImage;
+  bool _isRegistering = false;
 
   String _selectedCategory = 'LANDSCAPE';
   final String _deviceId = 'device-abc-123';
@@ -87,9 +97,7 @@ class _UploadPageState extends State<UploadPage> {
       context: context,
       backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(
-          top: Radius.circular(18),
-        ),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
       ),
       builder: (context) {
         return SafeArea(
@@ -131,24 +139,146 @@ class _UploadPageState extends State<UploadPage> {
     );
   }
 
-  void _uploadAndRegister() {
+  ReownAppKitModal get _appKitModal {
+    final modal = widget.appKitModal;
+    if (modal == null) {
+      throw Exception(
+        'Wallet session is not available. Go back and connect MetaMask first.',
+      );
+    }
+    return modal;
+  }
+
+  List<String> _eip155Accounts(ReownAppKitModal modal) {
+    final accounts = modal.session?.getAccounts() ?? const [];
+    return accounts.where((account) => account.startsWith('eip155:')).toList();
+  }
+
+  String _walletAddress(ReownAppKitModal modal) {
+    final accounts = _eip155Accounts(modal);
+    for (final account in accounts) {
+      if (account.startsWith('$_sepoliaChain:')) {
+        return account.split(':').last;
+      }
+    }
+
+    final address = modal.session?.getAddress('eip155');
+    if (address != null && address.isNotEmpty) {
+      return address;
+    }
+
+    if (accounts.isNotEmpty) {
+      return accounts.first.split(':').last;
+    }
+
+    throw Exception(
+      'No EVM wallet address found in the WalletConnect session.',
+    );
+  }
+
+  Future<void> _ensureSepolia(ReownAppKitModal modal) async {
+    final sepolia = ReownAppKitModalNetworks.getNetworkInfo(
+      'eip155',
+      '11155111',
+    );
+
+    if (sepolia == null) {
+      throw Exception('Sepolia network info was not found.');
+    }
+
+    await modal.selectChain(sepolia);
+  }
+
+  String _friendlyError(Object error) {
+    if (error is ReownAppKitModalException) {
+      return error.message.toString();
+    }
+    return error.toString();
+  }
+
+  BigInt _registrationPrice() {
+    final rawPrice = _priceController.text.trim();
+    if (rawPrice.isEmpty) {
+      return BigInt.one;
+    }
+
+    final price = BigInt.tryParse(rawPrice);
+    if (price == null || price <= BigInt.zero) {
+      throw Exception('Price must be a positive integer.');
+    }
+
+    return price;
+  }
+
+  String _imageRegistrationHash() {
+    final fileName = _pickedImage?.name ?? 'image';
+    final byteLength = _imageBytes?.length ?? 0;
+    final title = _titleController.text.trim();
+    return [
+      'block-snap',
+      DateTime.now().toUtc().microsecondsSinceEpoch,
+      byteLength,
+      fileName,
+      title,
+    ].join(':');
+  }
+
+  String _buildRegisterImageCalldata(String pHash, BigInt price) {
+    const selector = '0x8f91ad9d';
+    final hashHex = hex.encode(utf8.encode(pHash));
+    final paddedHashLength = ((hashHex.length + 63) ~/ 64) * 64;
+
+    final offset = BigInt.from(64).toRadixString(16).padLeft(64, '0');
+    final priceHex = price.toRadixString(16).padLeft(64, '0');
+    final hashLength = (hashHex.length ~/ 2).toRadixString(16).padLeft(64, '0');
+    final hashEncoded = hashHex.padRight(paddedHashLength, '0');
+
+    return selector + offset + priceHex + hashLength + hashEncoded;
+  }
+
+  void _debugSession(String label, ReownAppKitModal modal) {
+    final approvedChains = modal.session?.getApprovedChains() ?? const [];
+    final approvedEip155Chains = approvedChains
+        .where((chain) => chain.startsWith('eip155:'))
+        .toList();
+    debugPrint('[$label] isConnected=${modal.isConnected}');
+    debugPrint('[$label] selectedChain=${modal.selectedChain?.chainId}');
+    debugPrint('[$label] topic=${modal.session?.topic}');
+    debugPrint('[$label] namespaces=${modal.session?.namespaces}');
+    debugPrint('[$label] eip155Accounts=${_eip155Accounts(modal)}');
+    debugPrint('[$label] approvedEip155Chains=$approvedEip155Chains');
+  }
+
+  void _assertSepoliaApproved(ReownAppKitModal modal) {
+    final approvedChains = modal.session?.getApprovedChains() ?? const [];
+    final approvedEip155Chains = approvedChains
+        .where((chain) => chain.startsWith('eip155:'))
+        .toList();
+    if (!approvedEip155Chains.contains(_sepoliaChain)) {
+      throw Exception(
+        '현재 WalletConnect 세션이 Sepolia($_sepoliaChain)를 승인하지 않았습니다. '
+        '로그인 화면에서 연결 해제 후 MetaMask를 다시 연결해야 합니다. '
+        '현재 승인된 체인: $approvedChains',
+      );
+    }
+  }
+
+  Future<void> _registerOnBlockchain() async {
     if (_pickedImage == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('먼저 사진을 촬영하거나 선택해주세요.'),
-        ),
+        const SnackBar(content: Text('Please take or select an image first.')),
       );
       return;
     }
 
     if (_titleController.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Image Title을 입력해주세요.'),
-        ),
+        const SnackBar(content: Text('Please enter an image title.')),
       );
       return;
     }
+
+    if (_isRegistering) return;
 
     final uploadData = {
       'imageName': _pickedImage!.name,
@@ -159,23 +289,76 @@ class _UploadPageState extends State<UploadPage> {
       'deviceId': _deviceId,
       'capturedAt': _capturedAt,
     };
+    debugPrint('[UploadPage] uploadData=$uploadData');
 
-    debugPrint('업로드 데이터: $uploadData');
+    setState(() {
+      _isRegistering = true;
+    });
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Upload & Register on Blockchain 기능 연결 예정'),
-      ),
-    );
+    try {
+      final modal = _appKitModal;
+      if (!modal.isConnected || modal.session == null) {
+        throw Exception(
+          'MetaMask is not connected. Return to Wallet Login and connect first.',
+        );
+      }
 
-    /*
-      이후 이 위치에서 처리할 흐름:
+      await _ensureSepolia(modal);
+      _debugSession('UploadPage.beforeRegister', modal);
+      _assertSepoliaApproved(modal);
 
-      1. 이미지 파일 서버 업로드
-      2. 서버에서 SHA-256 / pHash 생성
-      3. 서버 또는 프론트에서 블록체인 트랜잭션 요청
-      4. txHash, imageHash, deviceId, capturedAt 등을 DB에 저장
-    */
+      final from = _walletAddress(modal);
+      final pHash = _imageRegistrationHash();
+      final price = _registrationPrice();
+      final data = _buildRegisterImageCalldata(pHash, price);
+
+      debugPrint('[UploadPage] from=$from');
+      debugPrint('[UploadPage] to=$_contractAddress');
+      debugPrint('[UploadPage] chainId=$_sepoliaChain');
+      debugPrint('[UploadPage] pHash=$pHash');
+      debugPrint('[UploadPage] price=$price');
+      debugPrint('[UploadPage] calldata=$data');
+
+      final result = await modal.request(
+        topic: modal.session!.topic,
+        chainId: _sepoliaChain,
+        switchToChainId: _sepoliaChain,
+        request: SessionRequestParams(
+          method: 'eth_sendTransaction',
+          params: [
+            {
+              'from': from,
+              'to': _contractAddress,
+              'data': data,
+              'value': '0x0',
+            },
+          ],
+        ),
+      );
+
+      debugPrint('[UploadPage] txHash=$result');
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Blockchain registration submitted: $result')),
+      );
+    } catch (e, stackTrace) {
+      debugPrint('[UploadPage] register failed: $e');
+      debugPrint('[UploadPage] stackTrace: $stackTrace');
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Blockchain registration failed: ${_friendlyError(e)}'),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isRegistering = false;
+        });
+      }
+    }
   }
 
   @override
@@ -189,9 +372,7 @@ class _UploadPageState extends State<UploadPage> {
         elevation: 0,
         title: const Text(
           'Upload',
-          style: TextStyle(
-            fontWeight: FontWeight.w700,
-          ),
+          style: TextStyle(fontWeight: FontWeight.w700),
         ),
       ),
 
@@ -201,10 +382,7 @@ class _UploadPageState extends State<UploadPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const _UserHeader(
-                name: 'John Doe',
-                email: 'JohnDoe@gmail.com',
-              ),
+              const _UserHeader(name: 'John Doe', email: 'JohnDoe@gmail.com'),
 
               const SizedBox(height: 20),
 
@@ -217,9 +395,7 @@ class _UploadPageState extends State<UploadPage> {
                   decoration: BoxDecoration(
                     color: const Color(0xFFF3F4F6),
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                      color: const Color(0xFFE5E7EB),
-                    ),
+                    border: Border.all(color: const Color(0xFFE5E7EB)),
                   ),
                   child: _imageBytes == null
                       ? const Column(
@@ -333,24 +509,18 @@ class _UploadPageState extends State<UploadPage> {
 
               const SizedBox(height: 24),
 
-              _ReadOnlyField(
-                label: 'Device ID',
-                value: _deviceId,
-              ),
+              _ReadOnlyField(label: 'Device ID', value: _deviceId),
 
               const SizedBox(height: 18),
 
-              _ReadOnlyField(
-                label: 'Captured At',
-                value: _capturedAt,
-              ),
+              _ReadOnlyField(label: 'Captured At', value: _capturedAt),
 
               const SizedBox(height: 28),
 
               SizedBox(
                 width: double.infinity,
                 child: FilledButton(
-                  onPressed: _uploadAndRegister,
+                  onPressed: _isRegistering ? null : _registerOnBlockchain,
                   style: FilledButton.styleFrom(
                     backgroundColor: Colors.black,
                     padding: const EdgeInsets.symmetric(vertical: 15),
@@ -358,14 +528,23 @@ class _UploadPageState extends State<UploadPage> {
                       borderRadius: BorderRadius.circular(12),
                     ),
                   ),
-                  child: const Text(
-                    'Upload & Register on Blockchain',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
+                  child: _isRegistering
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Text(
+                          'Upload & Register on Blockchain',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                 ),
               ),
             ],
@@ -380,10 +559,7 @@ class _UserHeader extends StatelessWidget {
   final String name;
   final String email;
 
-  const _UserHeader({
-    required this.name,
-    required this.email,
-  });
+  const _UserHeader({required this.name, required this.email});
 
   @override
   Widget build(BuildContext context) {
@@ -392,10 +568,7 @@ class _UserHeader extends StatelessWidget {
         const CircleAvatar(
           radius: 22,
           backgroundColor: Color(0xFFE5E7EB),
-          child: Icon(
-            Icons.person,
-            color: Colors.black87,
-          ),
+          child: Icon(Icons.person, color: Colors.black87),
         ),
         const SizedBox(width: 12),
         Expanded(
@@ -417,10 +590,7 @@ class _UserHeader extends StatelessWidget {
                 email,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Colors.black54,
-                  fontSize: 12,
-                ),
+                style: const TextStyle(color: Colors.black54, fontSize: 12),
               ),
             ],
           ),
@@ -464,20 +634,12 @@ class _InputField extends StatelessWidget {
           keyboardType: keyboardType,
           decoration: InputDecoration(
             hintText: hintText,
-            hintStyle: const TextStyle(
-              color: Color(0xFF928B8B),
-              fontSize: 16,
-            ),
+            hintStyle: const TextStyle(color: Color(0xFF928B8B), fontSize: 16),
             enabledBorder: const UnderlineInputBorder(
-              borderSide: BorderSide(
-                color: Color(0xFFE6E6E6),
-              ),
+              borderSide: BorderSide(color: Color(0xFFE6E6E6)),
             ),
             focusedBorder: const UnderlineInputBorder(
-              borderSide: BorderSide(
-                color: Colors.black,
-                width: 1.2,
-              ),
+              borderSide: BorderSide(color: Colors.black, width: 1.2),
             ),
           ),
         ),
@@ -490,10 +652,7 @@ class _ReadOnlyField extends StatelessWidget {
   final String label;
   final String value;
 
-  const _ReadOnlyField({
-    required this.label,
-    required this.value,
-  });
+  const _ReadOnlyField({required this.label, required this.value});
 
   @override
   Widget build(BuildContext context) {
@@ -513,18 +672,11 @@ class _ReadOnlyField extends StatelessWidget {
           width: double.infinity,
           padding: const EdgeInsets.only(bottom: 10),
           decoration: const BoxDecoration(
-            border: Border(
-              bottom: BorderSide(
-                color: Color(0xFFE6E6E6),
-              ),
-            ),
+            border: Border(bottom: BorderSide(color: Color(0xFFE6E6E6))),
           ),
           child: Text(
             value,
-            style: const TextStyle(
-              color: Color(0xFF928B8B),
-              fontSize: 16,
-            ),
+            style: const TextStyle(color: Color(0xFF928B8B), fontSize: 16),
           ),
         ),
       ],
