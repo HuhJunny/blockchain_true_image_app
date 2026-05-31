@@ -1,10 +1,12 @@
 import 'dart:convert';
 
+import '../api/auth_api.dart';
+import '../core/token_storage.dart';
+import '../services/auth_service.dart';
 import 'package:convert/convert.dart';
 import 'package:flutter/material.dart';
 import 'package:reown_appkit/reown_appkit.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:http/http.dart' as http;
 import 'home_page.dart';
 
 class TempLoginPage extends StatefulWidget {
@@ -116,11 +118,6 @@ class _TempLoginPageState extends State<TempLoginPage> {
       await appKitModal!.selectChain(sepolia);
     }
   }
-
-  // TODO: 백엔드 주소에 맞게 수정
-  // Android 에뮬레이터에서 로컬 서버면 http://10.0.2.2:8080
-  // Chrome에서 로컬 서버면 http://localhost:8080
-  static const String baseUrl = 'http://localhost:8080';
 
   @override
   void initState() {
@@ -480,23 +477,6 @@ class _TempLoginPageState extends State<TempLoginPage> {
     return result.toString();
   }
 
-  Future<Map<String, dynamic>> postJson(
-    String path,
-    Map<String, dynamic> body,
-  ) async {
-    final response = await http.post(
-      Uri.parse('$baseUrl$path'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode(body),
-    );
-
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw Exception('API 오류 ${response.statusCode}: ${response.body}');
-    }
-
-    return jsonDecode(response.body) as Map<String, dynamic>;
-  }
-
   Future<void> loginWithWallet() async {
     if (appKitModal == null) return;
 
@@ -529,11 +509,10 @@ class _TempLoginPageState extends State<TempLoginPage> {
         throw Exception('Sepolia 네트워크로 변경해주세요. 현재 chainId: $currentChainId');
       }
 
-      final nonceResponse = await postJson('/auth/wallet/nonce', {
-        'walletAddress': address,
-        'chainId': currentChainId,
-        'walletType': 'METAMASK',
-      });
+      final nonceResponse = await AuthApi.requestNonce(
+        address,
+        chainId: currentChainId,
+      );
 
       final nonce = nonceResponse['nonce'];
       final message = nonceResponse['message'];
@@ -548,18 +527,15 @@ class _TempLoginPageState extends State<TempLoginPage> {
 
       final signature = await signMessage(message);
 
-      final loginResponse = await postJson('/auth/wallet/login', {
-        'walletAddress': address,
-        'signature': signature,
-        'nonce': nonce,
-        'chainId': currentChainId,
-        'walletType': 'METAMASK',
-      });
+      final loginResponse = await AuthService.login(
+        address,
+        signature,
+        nonce.toString(),
+        chainId: currentChainId,
+      );
 
       final prefs = await SharedPreferences.getInstance();
 
-      await prefs.setString('accessToken', loginResponse['accessToken']);
-      await prefs.setString('refreshToken', loginResponse['refreshToken']);
       await prefs.setString('walletAddress', address);
 
       final user = loginResponse['user'];
@@ -611,11 +587,7 @@ class _TempLoginPageState extends State<TempLoginPage> {
     try {
       await appKitModal?.disconnect();
 
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.remove('accessToken');
-      await prefs.remove('refreshToken');
-      await prefs.remove('walletAddress');
-      await prefs.remove('userId');
+      await TokenStorage.clear();
 
       if (!mounted) return;
 

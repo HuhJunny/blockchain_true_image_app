@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import '../api/image_api.dart';
+import '../api/user_api.dart';
+import '../core/network_image_view.dart';
 import 'user_info_page.dart';
 import 'upload_page.dart';
 import 'my_gallery_page.dart';
@@ -17,42 +20,41 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   int _selectedIndex = 0;
+  late Future<_HomeData> _homeFuture;
 
-  final List<ImageItem> _items = const [
-    ImageItem(
-      title: 'Sunset View',
-      description: 'Beautiful sunset',
-      category: 'Nature',
-      uploadedAt: '2023-10-01',
-      isFavorite: true,
-      hasDerivative: false,
-      verified: true,
-    ),
-    ImageItem(
-      title: 'Forest Adventure',
-      description: 'Forest hike',
-      category: 'Adventure',
-      uploadedAt: '2023-10-01',
-      isFavorite: false,
-      hasDerivative: false,
-      verified: true,
-    ),
-    ImageItem(
-      title: 'City Lights',
-      description: 'City skyline',
-      category: 'Urban',
-      uploadedAt: '2023-10-01',
-      isFavorite: true,
-      hasDerivative: true,
-      verified: false,
-    ),
-  ];
+  @override
+  void initState() {
+    super.initState();
+    _homeFuture = _loadHome();
+  }
+
+  Future<_HomeData> _loadHome() async {
+    final results = await Future.wait([
+      UserApi.getMe().catchError((_) => <String, dynamic>{}),
+      ImageApi.getImages(0, size: 6),
+    ]);
+
+    final user = Map<String, dynamic>.from(results[0] as Map);
+    final rawItems = (results[1] as List).cast<dynamic>();
+    return _HomeData(
+      name: (user['nickname'] ?? user['name'] ?? 'Guest').toString(),
+      email: (user['email'] ?? '').toString(),
+      items: rawItems.map(ImageItem.fromJson).toList(),
+    );
+  }
+
+  void _refreshHome() {
+    setState(() {
+      _homeFuture = _loadHome();
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     final pages = [
       _HomeContent(
-        items: _items,
+        homeFuture: _homeFuture,
+        onRefresh: _refreshHome,
         onOpenUpload: () {
           Navigator.push(
             context,
@@ -62,7 +64,9 @@ class _HomePageState extends State<HomePage> {
                 appKitModal: widget.appKitModal,
               ),
             ),
-          );
+          ).then((changed) {
+            if (changed == true) _refreshHome();
+          });
         },
         onOpenGallery: () {
           Navigator.push(
@@ -126,104 +130,146 @@ class _HomePageState extends State<HomePage> {
 }
 
 class _HomeContent extends StatelessWidget {
-  final List<ImageItem> items;
+  final Future<_HomeData> homeFuture;
+  final VoidCallback onRefresh;
   final VoidCallback onOpenUpload;
   final VoidCallback onOpenGallery;
 
   const _HomeContent({
-    required this.items,
+    required this.homeFuture,
+    required this.onRefresh,
     required this.onOpenUpload,
     required this.onOpenGallery,
   });
 
   @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const _UserHeader(name: 'John Doe', email: 'JohnDoe@gmail.com'),
-          const SizedBox(height: 20),
+    return RefreshIndicator(
+      onRefresh: () async => onRefresh(),
+      child: FutureBuilder<_HomeData>(
+        future: homeFuture,
+        builder: (context, snapshot) {
+          final data = snapshot.data;
+          final items = data?.items ?? const <ImageItem>[];
 
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: onOpenGallery,
-                  icon: const Icon(Icons.photo_library_outlined),
-                  label: const Text('Gallery'),
-                  style: OutlinedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
+          return SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _UserHeader(
+                  name: data?.name ?? 'Loading...',
+                  email: data?.email ?? '',
+                ),
+                const SizedBox(height: 20),
+
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: onOpenGallery,
+                        icon: const Icon(Icons.photo_library_outlined),
+                        label: const Text('Gallery'),
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                      ),
                     ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: FilledButton.icon(
-                  onPressed: onOpenUpload,
-                  icon: const Icon(Icons.camera_alt_outlined),
-                  label: const Text('Camera & Upload'),
-                  style: FilledButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    backgroundColor: Colors.black,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: FilledButton.icon(
+                        onPressed: onOpenUpload,
+                        icon: const Icon(Icons.camera_alt_outlined),
+                        label: const Text('Camera & Upload'),
+                        style: FilledButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          backgroundColor: Colors.black,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                      ),
                     ),
+                  ],
+                ),
+
+                const SizedBox(height: 20),
+                const _HeroCarousel(),
+                const SizedBox(height: 24),
+
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      'Recent Images',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: onOpenGallery,
+                      child: const Text('View all'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+
+                if (snapshot.connectionState == ConnectionState.waiting)
+                  const Center(
+                    child: Padding(
+                      padding: EdgeInsets.all(24),
+                      child: CircularProgressIndicator(),
+                    ),
+                  )
+                else if (snapshot.hasError)
+                  Center(
+                    child: TextButton(
+                      onPressed: onRefresh,
+                      child: const Text('Failed to load images. Tap to retry.'),
+                    ),
+                  )
+                else if (items.isEmpty)
+                  const Center(
+                    child: Padding(
+                      padding: EdgeInsets.all(24),
+                      child: Text('No images yet.'),
+                    ),
+                  )
+                else
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final width = constraints.maxWidth;
+                      final crossAxisCount = width >= 700
+                          ? 4
+                          : width >= 520
+                          ? 3
+                          : 2;
+
+                      return GridView.builder(
+                        itemCount: items.length,
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: crossAxisCount,
+                          crossAxisSpacing: 12,
+                          mainAxisSpacing: 12,
+                          childAspectRatio: 0.72,
+                        ),
+                        itemBuilder: (context, index) {
+                          return _ImageCard(item: items[index]);
+                        },
+                      );
+                    },
                   ),
-                ),
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 20),
-          const _HeroCarousel(),
-          const SizedBox(height: 24),
-
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text(
-                'Recent Images',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
-              ),
-              TextButton(
-                onPressed: onOpenGallery,
-                child: const Text('View all'),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final width = constraints.maxWidth;
-              final crossAxisCount = width >= 700
-                  ? 4
-                  : width >= 520
-                  ? 3
-                  : 2;
-
-              return GridView.builder(
-                itemCount: items.length,
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: crossAxisCount,
-                  crossAxisSpacing: 12,
-                  mainAxisSpacing: 12,
-                  childAspectRatio: 0.72,
-                ),
-                itemBuilder: (context, index) {
-                  return _ImageCard(item: items[index]);
-                },
-              );
-            },
-          ),
-        ],
+              ],
+            ),
+          );
+        },
       ),
     );
   }
@@ -383,6 +429,7 @@ class _ImageCard extends StatelessWidget {
           context,
           MaterialPageRoute(
             builder: (context) => DetailedImagePage(
+              imageId: item.id,
               image: ImageDetailInfo.sample(
                 title: item.title,
                 description: item.description,
@@ -416,17 +463,11 @@ class _ImageCard extends StatelessWidget {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  Container(
-                    color: const Color(0xFFF3F4F6),
-                    child: Center(
-                      child: Text(
-                        item.description,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          color: Colors.black87,
-                          fontSize: 13,
-                        ),
-                      ),
+                  NetworkImageView(
+                    path: item.thumbnailUrl,
+                    fallback: Container(
+                      color: const Color(0xFFF3F4F6),
+                      child: const Center(child: Text('Thumbnail')),
                     ),
                   ),
                   Positioned(
@@ -535,21 +576,53 @@ class _VerifyBadge extends StatelessWidget {
 }
 
 class ImageItem {
+  final int id;
   final String title;
   final String description;
   final String category;
   final String uploadedAt;
+  final String thumbnailUrl;
   final bool isFavorite;
   final bool hasDerivative;
   final bool verified;
 
   const ImageItem({
+    required this.id,
     required this.title,
     required this.description,
     required this.category,
     required this.uploadedAt,
+    required this.thumbnailUrl,
     required this.isFavorite,
     required this.hasDerivative,
     required this.verified,
+  });
+
+  factory ImageItem.fromJson(dynamic raw) {
+    final json = Map<String, dynamic>.from(raw as Map);
+    final status = (json['verificationStatus'] ?? '').toString().toUpperCase();
+    return ImageItem(
+      id: (json['id'] as num?)?.toInt() ?? 0,
+      title: (json['title'] ?? 'Untitled').toString(),
+      description: (json['price'] == null) ? '' : '\$ ${json['price']}',
+      category: status.isEmpty ? 'IMAGE' : status,
+      uploadedAt: '',
+      thumbnailUrl: (json['thumbnailUrl'] ?? '').toString(),
+      isFavorite: false,
+      hasDerivative: false,
+      verified: status == 'VERIFIED' || status == 'MATCHED',
+    );
+  }
+}
+
+class _HomeData {
+  final String name;
+  final String email;
+  final List<ImageItem> items;
+
+  const _HomeData({
+    required this.name,
+    required this.email,
+    required this.items,
   });
 }

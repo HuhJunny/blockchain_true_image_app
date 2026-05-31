@@ -1,7 +1,9 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import '../api/image_api.dart';
 import 'package:convert/convert.dart';
+import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:reown_appkit/reown_appkit.dart';
@@ -211,16 +213,11 @@ class _UploadPageState extends State<UploadPage> {
   }
 
   String _imageRegistrationHash() {
-    final fileName = _pickedImage?.name ?? 'image';
-    final byteLength = _imageBytes?.length ?? 0;
-    final title = _titleController.text.trim();
-    return [
-      'block-snap',
-      DateTime.now().toUtc().microsecondsSinceEpoch,
-      byteLength,
-      fileName,
-      title,
-    ].join(':');
+    final bytes = _imageBytes;
+    if (bytes == null) {
+      throw Exception('Image bytes are not ready.');
+    }
+    return '0x${sha256.convert(bytes)}';
   }
 
   String _buildRegisterImageCalldata(String pHash, BigInt price) {
@@ -338,10 +335,28 @@ class _UploadPageState extends State<UploadPage> {
 
       debugPrint('[UploadPage] txHash=$result');
 
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Blockchain registration submitted: $result')),
+      final imageHash = _imageRegistrationHash();
+      final txHash = result.toString();
+      await ImageApi.upload(
+        fileName: _pickedImage!.name,
+        bytes: _imageBytes!,
+        title: _titleController.text.trim(),
+        description: _descriptionController.text.trim(),
+        price: _priceController.text.trim().isEmpty
+            ? '1'
+            : _priceController.text.trim(),
+        category: _selectedCategory,
+        deviceId: _deviceId,
+        capturedAt: _capturedAt,
+        imageHash: imageHash,
+        txHash: txHash,
       );
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Upload completed.')));
+      Navigator.pop(context, true);
     } catch (e, stackTrace) {
       debugPrint('[UploadPage] register failed: $e');
       debugPrint('[UploadPage] stackTrace: $stackTrace');
