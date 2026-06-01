@@ -1,13 +1,19 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'package:image_picker/image_picker.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:reown_appkit/reown_appkit.dart';
+
 import '../api/image_api.dart';
 import '../api/user_api.dart';
 import '../core/network_image_view.dart';
-import 'user_info_page.dart';
-import 'upload_page.dart';
-import 'my_gallery_page.dart';
-import 'gallery_page.dart';
 import 'detailed_image_page.dart';
-import 'package:reown_appkit/reown_appkit.dart';
+import 'gallery_page.dart';
+import 'my_gallery_page.dart';
+import 'upload_page.dart';
+import 'user_info_page.dart';
 
 class HomePage extends StatefulWidget {
   final ReownAppKitModal? appKitModal;
@@ -21,6 +27,15 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   int _selectedIndex = 0;
   late Future<_HomeData> _homeFuture;
+
+  bool _isHashVerifying = false;
+  String? _lastVerifyMessage;
+
+  final ImagePicker _picker = ImagePicker();
+
+  // 실제 휴대폰에서 테스트 중이면 localhost 말고 PC IPv4 주소로 변경
+  // 예: http://192.168.0.15:8080
+  static const String baseUrl = 'http://192.168.0.15:8080';
 
   @override
   void initState() {
@@ -36,6 +51,7 @@ class _HomePageState extends State<HomePage> {
 
     final user = Map<String, dynamic>.from(results[0] as Map);
     final rawItems = (results[1] as List).cast<dynamic>();
+
     return _HomeData(
       name: (user['nickname'] ?? user['name'] ?? 'Guest').toString(),
       email: (user['email'] ?? '').toString(),
@@ -49,12 +65,197 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
+  Future<void> _captureAndVerifyImageHash() async {
+    if (_isHashVerifying) return;
+
+    setState(() {
+      _isHashVerifying = true;
+      _lastVerifyMessage = null;
+    });
+
+    try {
+      final XFile? image = await _picker.pickImage(
+        source: ImageSource.camera,
+        imageQuality: 100,
+      );
+
+      if (image == null) {
+        setState(() {
+          _lastVerifyMessage = '사진 촬영이 취소되었습니다.';
+        });
+        return;
+      }
+
+      setState(() {
+        _lastVerifyMessage = '이미지 파일을 서버에서 검증 중...';
+      });
+
+      final prefs = await SharedPreferences.getInstance();
+      final accessToken = prefs.getString('accessToken');
+
+      if (accessToken == null || accessToken.isEmpty) {
+        throw Exception('로그인이 필요합니다. 먼저 지갑으로 로그인해주세요.');
+      }
+
+      final request = http.MultipartRequest(
+        'POST',
+        Uri.parse('$baseUrl/verification/check'),
+      );
+
+      request.headers['Authorization'] = 'Bearer $accessToken';
+
+      request.files.add(
+        await http.MultipartFile.fromPath(
+          'image',
+          image.path,
+        ),
+      );
+
+      final streamedResponse = await request.send();
+      final response = await http.Response.fromStream(streamedResponse);
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw Exception('서버 검증 실패: ${response.statusCode} ${response.body}');
+      }
+
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+
+      final bool isVerified = data['isVerified'] == true;
+      final String verificationStatus =
+          data['verificationStatus']?.toString() ?? 'UNKNOWN';
+      final String? imageHash = data['imageHash']?.toString();
+      final String? txHash = data['txHash']?.toString();
+      final String? reason = data['reason']?.toString();
+      final int? imageId =
+          data['imageId'] is int ? data['imageId'] as int : null;
+
+      setState(() {
+        _lastVerifyMessage = isVerified
+            ? '검증 성공: 등록된 원본 이미지와 일치합니다.'
+            : '검증 실패: ${reason ?? '등록된 원본 이미지와 일치하지 않습니다.'}';
+      });
+
+      if (!mounted) return;
+
+      _showHashVerifyResultDialog(
+        imageHash: imageHash ?? '서버 응답에 imageHash가 없습니다.',
+        isVerified: isVerified,
+        verificationStatus: verificationStatus,
+        imageId: imageId,
+        txHash: txHash,
+        reason: reason,
+      );
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        _lastVerifyMessage = '검증 실패: $e';
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('검증 실패: $e')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isHashVerifying = false;
+        });
+      }
+    }
+  }
+
+  void _showHashVerifyResultDialog({
+    required String imageHash,
+    required bool isVerified,
+    required String verificationStatus,
+    int? imageId,
+    String? txHash,
+    String? reason,
+  }) {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Row(
+            children: [
+              Icon(
+                isVerified ? Icons.verified : Icons.warning_amber_rounded,
+                color: isVerified ? Colors.blue : Colors.orange,
+              ),
+              const SizedBox(width: 8),
+              Text(isVerified ? '검증 성공' : '검증 실패'),
+            ],
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  isVerified
+                      ? '서버 검증 결과, 블록체인에 등록된 원본 이미지와 일치합니다.'
+                      : reason ?? '블록체인에 등록된 원본 해시와 일치하지 않습니다.',
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'Verification Status',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 6),
+                SelectableText(verificationStatus),
+                if (imageId != null) ...[
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Image ID',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 6),
+                  SelectableText(imageId.toString()),
+                ],
+                const SizedBox(height: 12),
+                const Text(
+                  'Image Hash',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 6),
+                SelectableText(
+                  imageHash,
+                  style: const TextStyle(fontSize: 12),
+                ),
+                if (txHash != null) ...[
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Transaction Hash',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 6),
+                  SelectableText(
+                    txHash,
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('확인'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final pages = [
       _HomeContent(
         homeFuture: _homeFuture,
         onRefresh: _refreshHome,
+        isHashVerifying: _isHashVerifying,
+        lastVerifyMessage: _lastVerifyMessage,
+        onVerifyByHash: _captureAndVerifyImageHash,
         onOpenUpload: () {
           Navigator.push(
             context,
@@ -96,7 +297,9 @@ class _HomePageState extends State<HomePage> {
                   appKitModal: widget.appKitModal,
                 ),
               ),
-            );
+            ).then((changed) {
+              if (changed == true) _refreshHome();
+            });
             return;
           }
 
@@ -134,12 +337,18 @@ class _HomeContent extends StatelessWidget {
   final VoidCallback onRefresh;
   final VoidCallback onOpenUpload;
   final VoidCallback onOpenGallery;
+  final VoidCallback onVerifyByHash;
+  final bool isHashVerifying;
+  final String? lastVerifyMessage;
 
   const _HomeContent({
     required this.homeFuture,
     required this.onRefresh,
     required this.onOpenUpload,
     required this.onOpenGallery,
+    required this.onVerifyByHash,
+    required this.isHashVerifying,
+    required this.lastVerifyMessage,
   });
 
   @override
@@ -163,7 +372,6 @@ class _HomeContent extends StatelessWidget {
                   email: data?.email ?? '',
                 ),
                 const SizedBox(height: 20),
-
                 Row(
                   children: [
                     Expanded(
@@ -196,11 +404,54 @@ class _HomeContent extends StatelessWidget {
                     ),
                   ],
                 ),
-
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: isHashVerifying ? null : onVerifyByHash,
+                    icon: isHashVerifying
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.verified_user_outlined),
+                    label: Text(
+                      isHashVerifying ? '이미지 검증 중...' : '사진 찍어서 이미지 검증',
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      foregroundColor: Colors.black87,
+                      side: const BorderSide(color: Color(0xFFE5E7EB)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                ),
+                if (lastVerifyMessage != null) ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF9FAFB),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: const Color(0xFFE5E7EB)),
+                    ),
+                    child: Text(
+                      lastVerifyMessage!,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: Colors.black87,
+                      ),
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 20),
                 const _HeroCarousel(),
                 const SizedBox(height: 24),
-
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
@@ -218,7 +469,6 @@ class _HomeContent extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(height: 12),
-
                 if (snapshot.connectionState == ConnectionState.waiting)
                   const Center(
                     child: Padding(
@@ -247,14 +497,15 @@ class _HomeContent extends StatelessWidget {
                       final crossAxisCount = width >= 700
                           ? 4
                           : width >= 520
-                          ? 3
-                          : 2;
+                              ? 3
+                              : 2;
 
                       return GridView.builder(
                         itemCount: items.length,
                         shrinkWrap: true,
                         physics: const NeverScrollableScrollPhysics(),
-                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                        gridDelegate:
+                            SliverGridDelegateWithFixedCrossAxisCount(
                           crossAxisCount: crossAxisCount,
                           crossAxisSpacing: 12,
                           mainAxisSpacing: 12,
@@ -601,12 +852,13 @@ class ImageItem {
   factory ImageItem.fromJson(dynamic raw) {
     final json = Map<String, dynamic>.from(raw as Map);
     final status = (json['verificationStatus'] ?? '').toString().toUpperCase();
+
     return ImageItem(
       id: (json['id'] as num?)?.toInt() ?? 0,
       title: (json['title'] ?? 'Untitled').toString(),
       description: (json['price'] == null) ? '' : '\$ ${json['price']}',
       category: status.isEmpty ? 'IMAGE' : status,
-      uploadedAt: '',
+      uploadedAt: (json['createdAt'] ?? json['uploadedAt'] ?? '').toString(),
       thumbnailUrl: (json['thumbnailUrl'] ?? '').toString(),
       isFavorite: false,
       hasDerivative: false,
