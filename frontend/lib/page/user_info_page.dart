@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:reown_appkit/reown_appkit.dart';
 
 import '../api/user_api.dart';
 import '../core/network_image_view.dart';
@@ -6,7 +7,9 @@ import 'detailed_image_page.dart';
 import 'edit_profile_page.dart';
 
 class UserInfoPage extends StatefulWidget {
-  const UserInfoPage({super.key});
+  final ReownAppKitModal? appKitModal;
+
+  const UserInfoPage({super.key, this.appKitModal});
 
   @override
   State<UserInfoPage> createState() => _UserInfoPageState();
@@ -111,14 +114,20 @@ class _UserInfoPageState extends State<UserInfoPage> {
                   count: data.orders.length,
                 ),
                 const SizedBox(height: 12),
-                _HorizontalImageList(items: data.orders),
+                _HorizontalImageList(
+                  items: data.orders,
+                  appKitModal: widget.appKitModal,
+                ),
                 const SizedBox(height: 28),
                 _SectionTitle(
                   title: 'Liked Lists',
                   count: data.favorites.length,
                 ),
                 const SizedBox(height: 12),
-                _HorizontalImageList(items: data.favorites),
+                _HorizontalImageList(
+                  items: data.favorites,
+                  appKitModal: widget.appKitModal,
+                ),
               ],
             ),
           );
@@ -202,8 +211,9 @@ class _SectionTitle extends StatelessWidget {
 
 class _HorizontalImageList extends StatelessWidget {
   final List<ProfileImageItem> items;
+  final ReownAppKitModal? appKitModal;
 
-  const _HorizontalImageList({required this.items});
+  const _HorizontalImageList({required this.items, this.appKitModal});
 
   @override
   Widget build(BuildContext context) {
@@ -220,7 +230,8 @@ class _HorizontalImageList extends StatelessWidget {
         scrollDirection: Axis.horizontal,
         itemCount: items.length,
         separatorBuilder: (context, index) => const SizedBox(width: 12),
-        itemBuilder: (context, index) => _ProfileImageCard(item: items[index]),
+        itemBuilder: (context, index) =>
+            _ProfileImageCard(item: items[index], appKitModal: appKitModal),
       ),
     );
   }
@@ -228,8 +239,9 @@ class _HorizontalImageList extends StatelessWidget {
 
 class _ProfileImageCard extends StatelessWidget {
   final ProfileImageItem item;
+  final ReownAppKitModal? appKitModal;
 
-  const _ProfileImageCard({required this.item});
+  const _ProfileImageCard({required this.item, this.appKitModal});
 
   @override
   Widget build(BuildContext context) {
@@ -243,6 +255,7 @@ class _ProfileImageCard extends StatelessWidget {
             MaterialPageRoute(
               builder: (context) => DetailedImagePage(
                 imageId: item.imageId,
+                appKitModal: appKitModal,
                 image: ImageDetailInfo.sample(
                   title: item.title,
                   price: item.price,

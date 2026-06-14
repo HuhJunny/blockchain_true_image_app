@@ -104,12 +104,7 @@ class _HomePageState extends State<HomePage> {
 
       request.headers['Authorization'] = 'Bearer $accessToken';
 
-      request.files.add(
-        await http.MultipartFile.fromPath(
-          'image',
-          image.path,
-        ),
-      );
+      request.files.add(await http.MultipartFile.fromPath('image', image.path));
 
       final streamedResponse = await request.send();
       final response = await http.Response.fromStream(streamedResponse);
@@ -126,8 +121,9 @@ class _HomePageState extends State<HomePage> {
       final String? imageHash = data['imageHash']?.toString();
       final String? txHash = data['txHash']?.toString();
       final String? reason = data['reason']?.toString();
-      final int? imageId =
-          data['imageId'] is int ? data['imageId'] as int : null;
+      final int? imageId = data['imageId'] is int
+          ? data['imageId'] as int
+          : null;
 
       setState(() {
         _lastVerifyMessage = isVerified
@@ -152,9 +148,9 @@ class _HomePageState extends State<HomePage> {
         _lastVerifyMessage = '검증 실패: $e';
       });
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('검증 실패: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('검증 실패: $e')));
     } finally {
       if (mounted) {
         setState(() {
@@ -217,10 +213,7 @@ class _HomePageState extends State<HomePage> {
                   style: TextStyle(fontWeight: FontWeight.w700),
                 ),
                 const SizedBox(height: 6),
-                SelectableText(
-                  imageHash,
-                  style: const TextStyle(fontSize: 12),
-                ),
+                SelectableText(imageHash, style: const TextStyle(fontSize: 12)),
                 if (txHash != null) ...[
                   const SizedBox(height: 12),
                   const Text(
@@ -228,10 +221,7 @@ class _HomePageState extends State<HomePage> {
                     style: TextStyle(fontWeight: FontWeight.w700),
                   ),
                   const SizedBox(height: 6),
-                  SelectableText(
-                    txHash,
-                    style: const TextStyle(fontSize: 12),
-                  ),
+                  SelectableText(txHash, style: const TextStyle(fontSize: 12)),
                 ],
               ],
             ),
@@ -253,6 +243,7 @@ class _HomePageState extends State<HomePage> {
       _HomeContent(
         homeFuture: _homeFuture,
         onRefresh: _refreshHome,
+        appKitModal: widget.appKitModal,
         isHashVerifying: _isHashVerifying,
         lastVerifyMessage: _lastVerifyMessage,
         onVerifyByHash: _captureAndVerifyImageHash,
@@ -272,13 +263,16 @@ class _HomePageState extends State<HomePage> {
         onOpenGallery: () {
           Navigator.push(
             context,
-            MaterialPageRoute(builder: (context) => const GalleryPage()),
+            MaterialPageRoute(
+              builder: (context) =>
+                  GalleryPage(appKitModal: widget.appKitModal),
+            ),
           );
         },
       ),
       const SizedBox.shrink(),
-      const MyGalleryPage(),
-      const UserInfoPage(),
+      MyGalleryPage(appKitModal: widget.appKitModal),
+      UserInfoPage(appKitModal: widget.appKitModal),
     ];
 
     return Scaffold(
@@ -334,6 +328,7 @@ class _HomePageState extends State<HomePage> {
 
 class _HomeContent extends StatelessWidget {
   final Future<_HomeData> homeFuture;
+  final ReownAppKitModal? appKitModal;
   final VoidCallback onRefresh;
   final VoidCallback onOpenUpload;
   final VoidCallback onOpenGallery;
@@ -343,6 +338,7 @@ class _HomeContent extends StatelessWidget {
 
   const _HomeContent({
     required this.homeFuture,
+    this.appKitModal,
     required this.onRefresh,
     required this.onOpenUpload,
     required this.onOpenGallery,
@@ -497,22 +493,24 @@ class _HomeContent extends StatelessWidget {
                       final crossAxisCount = width >= 700
                           ? 4
                           : width >= 520
-                              ? 3
-                              : 2;
+                          ? 3
+                          : 2;
 
                       return GridView.builder(
                         itemCount: items.length,
                         shrinkWrap: true,
                         physics: const NeverScrollableScrollPhysics(),
-                        gridDelegate:
-                            SliverGridDelegateWithFixedCrossAxisCount(
+                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                           crossAxisCount: crossAxisCount,
                           crossAxisSpacing: 12,
                           mainAxisSpacing: 12,
                           childAspectRatio: 0.72,
                         ),
                         itemBuilder: (context, index) {
-                          return _ImageCard(item: items[index]);
+                          return _ImageCard(
+                            item: items[index],
+                            appKitModal: appKitModal,
+                          );
                         },
                       );
                     },
@@ -668,8 +666,9 @@ class _HeroCarouselState extends State<_HeroCarousel> {
 
 class _ImageCard extends StatelessWidget {
   final ImageItem item;
+  final ReownAppKitModal? appKitModal;
 
-  const _ImageCard({required this.item});
+  const _ImageCard({required this.item, this.appKitModal});
 
   @override
   Widget build(BuildContext context) {
@@ -681,6 +680,7 @@ class _ImageCard extends StatelessWidget {
           MaterialPageRoute(
             builder: (context) => DetailedImagePage(
               imageId: item.id,
+              appKitModal: appKitModal,
               image: ImageDetailInfo.sample(
                 title: item.title,
                 description: item.description,

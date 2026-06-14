@@ -7,20 +7,13 @@ import db from "./db.js";
 export function createPaidOrder({ buyerUserId, imageId, paymentMethod }) {
   const txn = db.transaction((buyerId, imgId, payMethod) => {
     const image = db
-      .prepare(`SELECT id, user_id, price, is_sold FROM images WHERE id = ?`)
+      .prepare(`SELECT id, user_id, price FROM images WHERE id = ?`)
       .get(imgId);
     if (!image) {
       return { error: "NOT_FOUND" };
     }
     if (image.user_id === buyerId) {
       return { error: "SELF" };
-    }
-    if (image.is_sold) {
-      return { error: "SOLD" };
-    }
-    const upd = db.prepare(`UPDATE images SET is_sold = 1 WHERE id = ? AND is_sold = 0`).run(imgId);
-    if (upd.changes === 0) {
-      return { error: "SOLD" };
     }
     const purchasedAt = new Date().toISOString();
     const ins = db
