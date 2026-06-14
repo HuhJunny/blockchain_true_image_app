@@ -1,20 +1,133 @@
+import 'dart:convert';
+
+import 'package:convert/convert.dart';
 import 'package:flutter/material.dart';
+import 'package:reown_appkit/reown_appkit.dart';
 
 import '../api/image_api.dart';
 import '../api/order_api.dart';
 import '../core/network_image_view.dart';
 
-class DetailedImagePage extends StatelessWidget {
+class DetailedImagePage extends StatefulWidget {
   final int? imageId;
   final ImageDetailInfo image;
+  final ReownAppKitModal? appKitModal;
 
-  const DetailedImagePage({super.key, this.imageId, required this.image});
+  const DetailedImagePage({
+    super.key,
+    this.imageId,
+    required this.image,
+    this.appKitModal,
+  });
+
+  @override
+  State<DetailedImagePage> createState() => _DetailedImagePageState();
+}
+
+class _DetailedImagePageState extends State<DetailedImagePage> {
+  static const String _sepoliaChain = 'eip155:11155111';
+  static const String _contractAddress =
+      '0x6154ab54f64106e00C715EBfC7cE6ce8C5dfF9CB';
+
+  bool _isPurchasing = false;
 
   Future<ImageDetailInfo> _loadDetail() async {
-    final id = imageId;
-    if (id == null || id < 1) return image;
+    final id = widget.imageId;
+    if (id == null || id < 1) return widget.image;
     final data = await ImageApi.getDetail(id);
     return ImageDetailInfo.fromJson(data);
+  }
+
+  ReownAppKitModal get _appKitModal {
+    final modal = widget.appKitModal;
+    if (modal == null) {
+      throw Exception(
+        'Wallet session is not available. Go back and connect MetaMask first.',
+      );
+    }
+    return modal;
+  }
+
+  List<String> _eip155Accounts(ReownAppKitModal modal) {
+    final accounts = modal.session?.getAccounts() ?? const [];
+    return accounts.where((account) => account.startsWith('eip155:')).toList();
+  }
+
+  String _walletAddress(ReownAppKitModal modal) {
+    final accounts = _eip155Accounts(modal);
+    for (final account in accounts) {
+      if (account.startsWith('$_sepoliaChain:')) {
+        return account.split(':').last;
+      }
+    }
+
+    final address = modal.session?.getAddress('eip155');
+    if (address != null && address.isNotEmpty) {
+      return address;
+    }
+
+    if (accounts.isNotEmpty) {
+      return accounts.first.split(':').last;
+    }
+
+    throw Exception(
+      'No EVM wallet address found in the WalletConnect session.',
+    );
+  }
+
+  Future<void> _ensureSepolia(ReownAppKitModal modal) async {
+    final sepolia = ReownAppKitModalNetworks.getNetworkInfo(
+      'eip155',
+      '11155111',
+    );
+
+    if (sepolia == null) {
+      throw Exception('Sepolia network info was not found.');
+    }
+
+    await modal.selectChain(sepolia);
+  }
+
+  void _assertSepoliaApproved(ReownAppKitModal modal) {
+    final approvedChains = modal.session?.getApprovedChains() ?? const [];
+    final approvedEip155Chains = approvedChains
+        .where((chain) => chain.startsWith('eip155:'))
+        .toList();
+    if (!approvedEip155Chains.contains(_sepoliaChain)) {
+      throw Exception(
+        'Current WalletConnect session has not approved Sepolia ($_sepoliaChain). '
+        'Please reconnect MetaMask from the wallet login screen. '
+        'Approved chains: $approvedChains',
+      );
+    }
+  }
+
+  String _friendlyError(Object error) {
+    if (error is ReownAppKitModalException) {
+      return error.message.toString();
+    }
+    return error.toString();
+  }
+
+  BigInt _purchasePrice(ImageDetailInfo detail) {
+    final raw = detail.price.replaceAll(RegExp(r'[^0-9]'), '');
+    final price = BigInt.tryParse(raw);
+    if (price == null || price <= BigInt.zero) {
+      throw Exception('Image price is not a positive integer.');
+    }
+    return price;
+  }
+
+  String _buildPurchaseImageCalldata(String pHash) {
+    const selector = '0xeb7e0788';
+    final hashHex = hex.encode(utf8.encode(pHash));
+    final paddedHashLength = ((hashHex.length + 63) ~/ 64) * 64;
+
+    final offset = BigInt.from(32).toRadixString(16).padLeft(64, '0');
+    final hashLength = (hashHex.length ~/ 2).toRadixString(16).padLeft(64, '0');
+    final hashEncoded = hashHex.padRight(paddedHashLength, '0');
+
+    return selector + offset + hashLength + hashEncoded;
   }
 
   Future<void> _checkVerification(
@@ -38,18 +151,129 @@ class DetailedImagePage extends StatelessWidget {
 
   Future<void> _buyImage(BuildContext context, ImageDetailInfo detail) async {
     if (detail.id == null) return;
+    if (_isPurchasing) return;
+
+    setState(() {
+      _isPurchasing = true;
+    });
+
     try {
-      final data = await OrderApi.createOrder(detail.id!);
+      final modal = _appKitModal;
+      if (!modal.isConnected || modal.session == null) {
+        throw Exception(
+          'MetaMask is not connected. Return to Wallet Login and connect first.',
+        );
+      }
+      if (detail.imageHash.isEmpty) {
+        throw Exception('Image hash is missing.');
+      }
+
+      await _ensureSepolia(modal);
+      _assertSepoliaApproved(modal);
+
+      final from = _walletAddress(modal);
+      final price = _purchasePrice(detail);
+      final data = _buildPurchaseImageCalldata(detail.imageHash);
+      final value = '0x${price.toRadixString(16)}';
+
+      debugPrint('[DetailedImagePage] from=$from');
+      debugPrint('[DetailedImagePage] to=$_contractAddress');
+      debugPrint('[DetailedImagePage] pHash=${detail.imageHash}');
+      debugPrint('[DetailedImagePage] value=$value');
+      debugPrint('[DetailedImagePage] calldata=$data');
+
+      final result = await modal.request(
+        topic: modal.session!.topic,
+        chainId: _sepoliaChain,
+        switchToChainId: _sepoliaChain,
+        request: SessionRequestParams(
+          method: 'eth_sendTransaction',
+          params: [
+            {
+              'from': from,
+              'to': _contractAddress,
+              'data': data,
+              'value': value,
+            },
+          ],
+        ),
+      );
+
+      final order = await OrderApi.createOrder(detail.id!);
+
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Purchased. Order #${data['orderId']}')),
+        SnackBar(
+          content: Text(
+            'Purchase recorded. Order #${order['orderId']} / tx $result',
+          ),
+        ),
       );
       Navigator.pop(context, true);
     } catch (e) {
       if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Purchase failed: ${_friendlyError(e)}')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isPurchasing = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _downloadImage(
+    BuildContext context,
+    ImageDetailInfo detail,
+  ) async {
+    final imageId = detail.id;
+    final orderId = detail.purchasedOrderId;
+    if (imageId == null || orderId == null) return;
+
+    try {
+      final data = await ImageApi.requestDownload(imageId, orderId);
+      if (!context.mounted) return;
+      final downloadUrl = (data['downloadUrl'] ?? '').toString();
+      final expiresAt = (data['expiresAt'] ?? '').toString();
+      showDialog(
+        context: context,
+        builder: (dialogContext) {
+          return AlertDialog(
+            title: const Text('Download Ready'),
+            content: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('Watermarked download URL'),
+                  const SizedBox(height: 8),
+                  SelectableText(
+                    downloadUrl,
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                  if (expiresAt.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    Text('Expires at: $expiresAt'),
+                  ],
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Close'),
+              ),
+            ],
+          );
+        },
+      );
+    } catch (e) {
+      if (!context.mounted) return;
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('Purchase failed: $e')));
+      ).showSnackBar(SnackBar(content: Text('Download failed: $e')));
     }
   }
 
@@ -94,7 +318,7 @@ class DetailedImagePage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (imageId != null) {
+    if (widget.imageId != null) {
       return FutureBuilder<ImageDetailInfo>(
         future: _loadDetail(),
         builder: (context, snapshot) {
@@ -120,12 +344,12 @@ class DetailedImagePage extends StatelessWidget {
               ),
             );
           }
-          return _buildContent(context, snapshot.data ?? image);
+          return _buildContent(context, snapshot.data ?? widget.image);
         },
       );
     }
 
-    return _buildContent(context, image);
+    return _buildContent(context, widget.image);
   }
 
   Widget _buildContent(BuildContext context, ImageDetailInfo image) {
@@ -254,10 +478,12 @@ Block Number: ${image.blockNumber}
                   const SizedBox(width: 12),
                   Expanded(
                     child: FilledButton(
-                      onPressed: image.isOwner
-                          ? () => _deleteImage(context, image)
-                          : image.isSold
+                      onPressed: _isPurchasing
                           ? null
+                          : image.isOwner
+                          ? () => _deleteImage(context, image)
+                          : image.purchasedOrderId != null
+                          ? () => _downloadImage(context, image)
                           : () => _buyImage(context, image),
                       style: FilledButton.styleFrom(
                         backgroundColor: image.isOwner
@@ -269,10 +495,12 @@ Block Number: ${image.blockNumber}
                         ),
                       ),
                       child: Text(
-                        image.isOwner
+                        _isPurchasing
+                            ? 'Purchasing...'
+                            : image.isOwner
                             ? 'Delete Image'
-                            : image.isSold
-                            ? 'Sold'
+                            : image.purchasedOrderId != null
+                            ? 'Download Image'
                             : 'Buy Image',
                         style: const TextStyle(
                           color: Colors.white,
@@ -308,6 +536,7 @@ class ImageDetailInfo {
   final String imageUrl;
   final bool isOwner;
   final bool isSold;
+  final int? purchasedOrderId;
 
   const ImageDetailInfo({
     this.id,
@@ -326,6 +555,7 @@ class ImageDetailInfo {
     this.imageUrl = '',
     this.isOwner = false,
     this.isSold = false,
+    this.purchasedOrderId,
   });
 
   factory ImageDetailInfo.fromJson(dynamic raw) {
@@ -337,13 +567,13 @@ class ImageDetailInfo {
       (json['seller'] as Map?) ?? const {},
     );
     final status = (verification['status'] ?? '').toString();
-    final isSold = json['isSold'] == true;
+    final purchasedOrderId = (json['purchasedOrderId'] as num?)?.toInt();
     return ImageDetailInfo(
       id: (json['id'] as num?)?.toInt(),
       title: (json['title'] ?? 'Untitled').toString(),
       seller: (seller['nickname'] ?? 'unknown').toString(),
       price: '\$ ${json['price'] ?? 0}',
-      saleStatus: isSold ? 'Sold' : 'On sale',
+      saleStatus: purchasedOrderId != null ? 'Purchased' : 'License available',
       description: (json['description'] ?? '').toString(),
       status: status,
       category: (json['category'] ?? '').toString(),
@@ -354,7 +584,8 @@ class ImageDetailInfo {
       blockNumber: (verification['blockNumber'] ?? '').toString(),
       imageUrl: (json['imageUrl'] ?? '').toString(),
       isOwner: json['isOwner'] == true,
-      isSold: isSold,
+      isSold: false,
+      purchasedOrderId: purchasedOrderId,
     );
   }
 

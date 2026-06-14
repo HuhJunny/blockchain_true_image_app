@@ -3,9 +3,9 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:reown_appkit/reown_appkit.dart';
-import '../services/image_hash_service.dart';
+import '../api/api_client.dart';
+import '../core/token_storage.dart';
 
 import '../api/image_api.dart';
 import '../api/user_api.dart';
@@ -33,13 +33,6 @@ class _HomePageState extends State<HomePage> {
   String? _lastVerifyMessage;
 
   final ImagePicker _picker = ImagePicker();
-
-  // 실제 휴대폰에서 테스트 중이면 localhost 말고 PC IPv4 주소로 변경
-  // 예: http://192.168.0.15:8080
-  static const String baseUrl = String.fromEnvironment(
-  'API_BASE_URL',
-  defaultValue: 'http://10.0.2.2:4000',
-);
 
   @override
   void initState() {
@@ -70,302 +63,194 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _captureAndVerifyImageHash() async {
-  if (_isHashVerifying) return;
-
-  setState(() {
-    _isHashVerifying = true;
-    _lastVerifyMessage = null;
-  });
-
-  try {
-    final XFile? image = await _picker.pickImage(
-      source: ImageSource.camera,
-      imageQuality: 100,
-    );
-
-    if (image == null) {
-      setState(() {
-        _lastVerifyMessage = '사진 촬영이 취소되었습니다.';
-      });
-      return;
-    }
+    if (_isHashVerifying) return;
 
     setState(() {
-      _lastVerifyMessage = '이미지 해시를 생성 중...';
+      _isHashVerifying = true;
+      _lastVerifyMessage = '카메라를 여는 중...';
     });
 
-    final hashes = await ImageHashService.calculate(image.path);
+    try {
+      final XFile? image = await _picker.pickImage(
+        source: ImageSource.camera,
+        imageQuality: 100,
+      );
 
-    debugPrint('[ImageHash] SHA-256: ${hashes.sha256Hash}');
-    debugPrint('[ImageHash] pHash: ${hashes.pHash}');
-
-    setState(() {
-      _lastVerifyMessage = '이미지 파일과 해시 정보를 서버에서 검증 중...';
-    });
-
-    final prefs = await SharedPreferences.getInstance();
-    final accessToken = prefs.getString('accessToken');
-
-    if (accessToken == null || accessToken.isEmpty) {
-      throw Exception('로그인이 필요합니다. 먼저 지갑으로 로그인해주세요.');
-    }
-
-    final request = http.MultipartRequest(
-      'POST',
-      Uri.parse('$baseUrl/verification/check'),
-    );
-
-    request.headers['Authorization'] = 'Bearer $accessToken';
-
-    request.fields['sha256Hash'] = hashes.sha256Hash;
-    request.fields['pHash'] = hashes.pHash;
-
-    request.files.add(
-      await http.MultipartFile.fromPath(
-        'image',
-        image.path,
-      ),
-    );
-
-    final streamedResponse = await request.send();
-    final response = await http.Response.fromStream(streamedResponse);
-
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw Exception('서버 검증 실패: ${response.statusCode} ${response.body}');
-    }
-
-    final data = jsonDecode(response.body) as Map<String, dynamic>;
-
-    final bool isVerified = data['isVerified'] == true;
-    final String verificationStatus =
-        data['verificationStatus']?.toString() ?? 'UNKNOWN';
-
-    final String? imageHash = data['imageHash']?.toString();
-    final String sha256Hash =
-        data['sha256Hash']?.toString() ?? hashes.sha256Hash;
-    final String pHash = data['pHash']?.toString() ?? hashes.pHash;
-
-    final String? matchType = data['matchType']?.toString();
-    final String? txHash = data['txHash']?.toString();
-    final String? reason = data['reason']?.toString();
-
-    final int? imageId =
-        data['imageId'] is int ? data['imageId'] as int : null;
-
-    final int? hammingDistance = data['hammingDistance'] is int
-        ? data['hammingDistance'] as int
-        : null;
-
-    final double? similarity = data['similarity'] is num
-        ? (data['similarity'] as num).toDouble()
-        : null;
-
-    setState(() {
-      if (isVerified) {
-        if (matchType == 'EXACT') {
-          _lastVerifyMessage = '검증 성공: SHA-256 기준으로 완전히 동일한 이미지입니다.';
-        } else if (matchType == 'SIMILAR') {
-          _lastVerifyMessage = '검증 성공: pHash 기준으로 유사한 이미지입니다.';
-        } else {
-          _lastVerifyMessage = '검증 성공: 등록된 이미지와 일치합니다.';
-        }
-      } else {
-        _lastVerifyMessage =
-            '검증 실패: ${reason ?? '등록된 이미지와 동일하거나 유사하지 않습니다.'}';
+      if (image == null) {
+        if (!mounted) return;
+        setState(() {
+          _lastVerifyMessage = '사진 촬영이 취소되었습니다.';
+        });
+        return;
       }
-    });
 
-    if (!mounted) return;
-
-    _showHashVerifyResultDialog(
-      imageHash: imageHash,
-      sha256Hash: sha256Hash,
-      pHash: pHash,
-      isVerified: isVerified,
-      verificationStatus: verificationStatus,
-      matchType: matchType,
-      imageId: imageId,
-      txHash: txHash,
-      reason: reason,
-      hammingDistance: hammingDistance,
-      similarity: similarity,
-    );
-  } catch (e) {
-    if (!mounted) return;
-
-    setState(() {
-      _lastVerifyMessage = '검증 실패: $e';
-    });
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('검증 실패: $e')),
-    );
-  } finally {
-    if (mounted) {
+      if (!mounted) return;
       setState(() {
-        _isHashVerifying = false;
+        _lastVerifyMessage = '이미지 검증 중...';
       });
+
+      final accessToken = await TokenStorage.getAccessToken();
+
+      if (accessToken == null || accessToken.isEmpty) {
+        throw Exception('로그인이 필요합니다. 먼저 지갑으로 로그인해주세요.');
+      }
+
+      final request = http.MultipartRequest(
+        'POST',
+        Uri.parse('${ApiClient.baseUrl}/verification/check'),
+      );
+
+      request.headers['Authorization'] = 'Bearer $accessToken';
+
+      request.files.add(await http.MultipartFile.fromPath('image', image.path));
+
+      final streamedResponse = await request.send();
+      final response = await http.Response.fromStream(streamedResponse);
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw Exception('서버 검증 실패: ${response.statusCode} ${response.body}');
+      }
+
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+
+      final verificationStatus =
+          (data['verificationStatus'] ?? data['status'] ?? 'UNKNOWN')
+              .toString()
+              .toUpperCase();
+
+      final rawImageId = data['imageId'];
+      final int? imageId = rawImageId is num
+          ? rawImageId.toInt()
+          : int.tryParse(rawImageId?.toString() ?? '');
+
+      final imageHash =
+          (data['imageHash'] ?? data['contentHash'] ?? data['hash'] ?? '')
+              .toString();
+
+      final reason = (data['reason'] ?? data['message'] ?? '').toString();
+
+      if (!mounted) return;
+
+      setState(() {
+        _lastVerifyMessage = _buildVerifyResultMessage(
+          verificationStatus,
+          reason,
+        );
+      });
+
+      _showHashVerifyResultDialog(
+        verificationStatus: verificationStatus,
+        imageId: imageId,
+        imageHash: imageHash.isEmpty ? '응답에 imageHash가 없습니다.' : imageHash,
+        reason: reason.isEmpty ? null : reason,
+      );
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        _lastVerifyMessage = '검증 실패: $e';
+      });
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('검증 실패: $e')));
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isHashVerifying = false;
+        });
+      }
     }
   }
-}
+
+  String _buildVerifyResultMessage(String status, String reason) {
+    switch (status) {
+      case 'MATCHED':
+        return '검증 성공: 등록 원본 이미지와 SHA-256 해시가 일치합니다.';
+      case 'MATCHED_WATERMARK':
+        return '검증 성공: 플랫폼에서 발급한 워터마크 이미지와 일치합니다.';
+      case 'NOT_MATCHED':
+        return '검증 실패: 등록 원본 또는 워터마크 이미지와 일치하지 않습니다.';
+      default:
+        return reason.isNotEmpty ? reason : '검증 결과를 확인할 수 없습니다.';
+    }
+  }
 
   void _showHashVerifyResultDialog({
-  String? imageHash,
-  required String sha256Hash,
-  required String pHash,
-  required bool isVerified,
-  required String verificationStatus,
-  String? matchType,
-  int? imageId,
-  String? txHash,
-  String? reason,
-  int? hammingDistance,
-  double? similarity,
-}) {
-  showDialog(
-    context: context,
-    builder: (context) {
-      return AlertDialog(
-        title: Row(
-          children: [
-            Icon(
-              isVerified ? Icons.verified : Icons.warning_amber_rounded,
-              color: isVerified ? Colors.blue : Colors.orange,
-            ),
-            const SizedBox(width: 8),
-            Text(isVerified ? '검증 성공' : '검증 실패'),
-          ],
-        ),
-        content: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+    required String verificationStatus,
+    required String imageHash,
+    int? imageId,
+    String? reason,
+  }) {
+    final bool isMatched =
+        verificationStatus == 'MATCHED' ||
+        verificationStatus == 'MATCHED_WATERMARK';
+
+    final String titleText;
+    final String descriptionText;
+
+    if (verificationStatus == 'MATCHED') {
+      titleText = '원본 이미지 검증 성공';
+      descriptionText = '촬영한 이미지가 등록된 원본 이미지와 일치합니다.';
+    } else if (verificationStatus == 'MATCHED_WATERMARK') {
+      titleText = '워터마크 이미지 검증 성공';
+      descriptionText = '촬영한 이미지가 플랫폼에서 발급한 워터마크 이미지와 일치합니다.';
+    } else if (verificationStatus == 'NOT_MATCHED') {
+      titleText = '검증 실패';
+      descriptionText = '등록된 원본 이미지 또는 워터마크 이미지와 일치하지 않습니다.';
+    } else {
+      titleText = '검증 결과 확인 필요';
+      descriptionText = reason ?? '서버 검증 결과를 확인할 수 없습니다.';
+    }
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: Row(
             children: [
-              Text(
-                isVerified
-                    ? _buildVerifySuccessMessage(matchType)
-                    : reason ?? '등록된 이미지와 동일하거나 유사하지 않습니다.',
+              Icon(
+                isMatched ? Icons.verified : Icons.warning_amber_rounded,
+                color: isMatched ? Colors.blue : Colors.orange,
               ),
-
-              const SizedBox(height: 16),
-
-              const Text(
-                'Verification Status',
-                style: TextStyle(fontWeight: FontWeight.w700),
-              ),
-              const SizedBox(height: 6),
-              SelectableText(verificationStatus),
-
-              if (matchType != null) ...[
-                const SizedBox(height: 12),
-                const Text(
-                  'Match Type',
-                  style: TextStyle(fontWeight: FontWeight.w700),
-                ),
-                const SizedBox(height: 6),
-                SelectableText(matchType),
-              ],
-
-              if (imageId != null) ...[
-                const SizedBox(height: 12),
-                const Text(
-                  'Matched Image ID',
-                  style: TextStyle(fontWeight: FontWeight.w700),
-                ),
-                const SizedBox(height: 6),
-                SelectableText(imageId.toString()),
-              ],
-
-              const SizedBox(height: 12),
-              const Text(
-                'SHA-256 Hash',
-                style: TextStyle(fontWeight: FontWeight.w700),
-              ),
-              const SizedBox(height: 6),
-              SelectableText(
-                sha256Hash,
-                style: const TextStyle(fontSize: 12),
-              ),
-
-              const SizedBox(height: 12),
-              const Text(
-                'pHash',
-                style: TextStyle(fontWeight: FontWeight.w700),
-              ),
-              const SizedBox(height: 6),
-              SelectableText(
-                pHash,
-                style: const TextStyle(fontSize: 12),
-              ),
-
-              if (imageHash != null) ...[
-                const SizedBox(height: 12),
-                const Text(
-                  'Server Image Hash',
-                  style: TextStyle(fontWeight: FontWeight.w700),
-                ),
-                const SizedBox(height: 6),
-                SelectableText(
-                  imageHash,
-                  style: const TextStyle(fontSize: 12),
-                ),
-              ],
-
-              if (hammingDistance != null) ...[
-                const SizedBox(height: 12),
-                const Text(
-                  'Hamming Distance',
-                  style: TextStyle(fontWeight: FontWeight.w700),
-                ),
-                const SizedBox(height: 6),
-                SelectableText(hammingDistance.toString()),
-              ],
-
-              if (similarity != null) ...[
-                const SizedBox(height: 12),
-                const Text(
-                  'Similarity',
-                  style: TextStyle(fontWeight: FontWeight.w700),
-                ),
-                const SizedBox(height: 6),
-                SelectableText(similarity.toStringAsFixed(3)),
-              ],
-
-              if (txHash != null) ...[
-                const SizedBox(height: 12),
-                const Text(
-                  'Transaction Hash',
-                  style: TextStyle(fontWeight: FontWeight.w700),
-                ),
-                const SizedBox(height: 6),
-                SelectableText(
-                  txHash,
-                  style: const TextStyle(fontSize: 12),
-                ),
-              ],
+              const SizedBox(width: 8),
+              Expanded(child: Text(titleText)),
             ],
           ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('확인'),
+          content: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(descriptionText),
+                const SizedBox(height: 16),
+                const Text(
+                  'Verification Result',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 12),
+                _VerifyInfoRow(label: 'Status', value: verificationStatus),
+                if (imageId != null)
+                  _VerifyInfoRow(label: 'Image ID', value: imageId.toString()),
+                _VerifyInfoRow(
+                  label: 'SHA-256',
+                  value: imageHash,
+                  selectable: true,
+                ),
+                if (reason != null && reason.isNotEmpty)
+                  _VerifyInfoRow(label: 'Reason', value: reason),
+              ],
+            ),
           ),
-        ],
-      );
-    },
-  );
-}
-String _buildVerifySuccessMessage(String? matchType) {
-  if (matchType == 'EXACT') {
-    return 'SHA-256 기준으로 기존 이미지와 완전히 동일합니다.';
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('확인'),
+            ),
+          ],
+        );
+      },
+    );
   }
-
-  if (matchType == 'SIMILAR') {
-    return 'SHA-256은 다르지만 pHash 기준으로 기존 이미지와 유사합니다.';
-  }
-
-  return '서버 검증 결과, 등록된 이미지와 일치합니다.';
-}
 
   @override
   Widget build(BuildContext context) {
@@ -373,6 +258,7 @@ String _buildVerifySuccessMessage(String? matchType) {
       _HomeContent(
         homeFuture: _homeFuture,
         onRefresh: _refreshHome,
+        appKitModal: widget.appKitModal,
         isHashVerifying: _isHashVerifying,
         lastVerifyMessage: _lastVerifyMessage,
         onVerifyByHash: _captureAndVerifyImageHash,
@@ -392,13 +278,16 @@ String _buildVerifySuccessMessage(String? matchType) {
         onOpenGallery: () {
           Navigator.push(
             context,
-            MaterialPageRoute(builder: (context) => const GalleryPage()),
+            MaterialPageRoute(
+              builder: (context) =>
+                  GalleryPage(appKitModal: widget.appKitModal),
+            ),
           );
         },
       ),
       const SizedBox.shrink(),
-      const MyGalleryPage(),
-      const UserInfoPage(),
+      MyGalleryPage(appKitModal: widget.appKitModal),
+      UserInfoPage(appKitModal: widget.appKitModal),
     ];
 
     return Scaffold(
@@ -452,8 +341,64 @@ String _buildVerifySuccessMessage(String? matchType) {
   }
 }
 
+class _VerifyInfoRow extends StatelessWidget {
+  final String label;
+  final String value;
+  final bool selectable;
+
+  const _VerifyInfoRow({
+    required this.label,
+    required this.value,
+    this.selectable = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final valueWidget = selectable
+        ? SelectableText(
+            value,
+            style: const TextStyle(
+              fontSize: 12.5,
+              color: Colors.black,
+              height: 1.35,
+            ),
+          )
+        : Text(
+            value,
+            style: const TextStyle(
+              fontSize: 13,
+              color: Colors.black,
+              fontWeight: FontWeight.w600,
+              height: 1.35,
+            ),
+          );
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 9),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 72,
+            child: Text(
+              label,
+              style: const TextStyle(
+                fontSize: 13,
+                color: Color(0xFF777777),
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          Expanded(child: valueWidget),
+        ],
+      ),
+    );
+  }
+}
+
 class _HomeContent extends StatelessWidget {
   final Future<_HomeData> homeFuture;
+  final ReownAppKitModal? appKitModal;
   final VoidCallback onRefresh;
   final VoidCallback onOpenUpload;
   final VoidCallback onOpenGallery;
@@ -463,6 +408,7 @@ class _HomeContent extends StatelessWidget {
 
   const _HomeContent({
     required this.homeFuture,
+    this.appKitModal,
     required this.onRefresh,
     required this.onOpenUpload,
     required this.onOpenGallery,
@@ -617,22 +563,24 @@ class _HomeContent extends StatelessWidget {
                       final crossAxisCount = width >= 700
                           ? 4
                           : width >= 520
-                              ? 3
-                              : 2;
+                          ? 3
+                          : 2;
 
                       return GridView.builder(
                         itemCount: items.length,
                         shrinkWrap: true,
                         physics: const NeverScrollableScrollPhysics(),
-                        gridDelegate:
-                            SliverGridDelegateWithFixedCrossAxisCount(
+                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                           crossAxisCount: crossAxisCount,
                           crossAxisSpacing: 12,
                           mainAxisSpacing: 12,
                           childAspectRatio: 0.72,
                         ),
                         itemBuilder: (context, index) {
-                          return _ImageCard(item: items[index]);
+                          return _ImageCard(
+                            item: items[index],
+                            appKitModal: appKitModal,
+                          );
                         },
                       );
                     },
@@ -788,8 +736,9 @@ class _HeroCarouselState extends State<_HeroCarousel> {
 
 class _ImageCard extends StatelessWidget {
   final ImageItem item;
+  final ReownAppKitModal? appKitModal;
 
-  const _ImageCard({required this.item});
+  const _ImageCard({required this.item, this.appKitModal});
 
   @override
   Widget build(BuildContext context) {
@@ -801,6 +750,7 @@ class _ImageCard extends StatelessWidget {
           MaterialPageRoute(
             builder: (context) => DetailedImagePage(
               imageId: item.id,
+              appKitModal: appKitModal,
               image: ImageDetailInfo.sample(
                 title: item.title,
                 description: item.description,

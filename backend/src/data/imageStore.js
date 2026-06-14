@@ -22,7 +22,7 @@ const toImage = (row) =>
           row.block_number !== undefined && row.block_number !== null
             ? Number(row.block_number)
             : null,
-        isSold: Boolean(row.is_sold ?? row.isSold ?? 0),
+        isSold: false,
         createdAt: row.created_at,
       }
     : null;
@@ -33,7 +33,7 @@ const mapRowToListItem = (row) => ({
   thumbnailUrl: row.thumbnail_url,
   price: row.price,
   verificationStatus: row.verification_status,
-  isSold: Boolean(row.is_sold),
+  isSold: false,
 });
 
 export const createImage = ({
@@ -250,7 +250,7 @@ const mapRowToMyUploadItem = (row) => ({
   thumbnailUrl: row.thumbnail_url,
   price: row.price,
   verificationStatus: row.verification_status,
-  isSold: Boolean(row.is_sold),
+  isSold: false,
   createdAt: toIso8601UtcZ(row.created_at),
 });
 

@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:reown_appkit/reown_appkit.dart';
 
 import '../core/network_image_view.dart';
 import '../api/user_api.dart';
 import 'detailed_image_page.dart';
 
 class MyGalleryPage extends StatefulWidget {
-  const MyGalleryPage({super.key});
+  final ReownAppKitModal? appKitModal;
+
+  const MyGalleryPage({super.key, this.appKitModal});
 
   @override
   State<MyGalleryPage> createState() => _MyGalleryPageState();
@@ -196,7 +199,10 @@ class _MyGalleryPageState extends State<MyGalleryPage> {
                             childAspectRatio: 0.73,
                           ),
                       itemBuilder: (context, index) {
-                        return _MyGalleryCard(item: items[index]);
+                        return _MyGalleryCard(
+                          item: items[index],
+                          appKitModal: widget.appKitModal,
+                        );
                       },
                     ),
                 ],
@@ -211,8 +217,9 @@ class _MyGalleryPageState extends State<MyGalleryPage> {
 
 class _MyGalleryCard extends StatelessWidget {
   final MyGalleryItem item;
+  final ReownAppKitModal? appKitModal;
 
-  const _MyGalleryCard({required this.item});
+  const _MyGalleryCard({required this.item, this.appKitModal});
 
   @override
   Widget build(BuildContext context) {
@@ -228,6 +235,7 @@ class _MyGalleryCard extends StatelessWidget {
           MaterialPageRoute(
             builder: (context) => DetailedImagePage(
               imageId: item.id,
+              appKitModal: appKitModal,
               image: ImageDetailInfo.sample(
                 title: item.title,
                 price: item.price,
