@@ -38,9 +38,6 @@ router.post("/", verifyToken, (req, res) => {
     if (result.error === "NOT_FOUND") {
       return res.status(404).json({ message: "해당 이미지를 찾을 수 없습니다." });
     }
-    if (result.error === "SOLD") {
-      return res.status(409).json({ message: "이미 구매된 이미지입니다." });
-    }
     if (result.error === "SELF") {
       return res.status(400).json({ message: "본인이 등록한 이미지는 구매할 수 없습니다." });
     }

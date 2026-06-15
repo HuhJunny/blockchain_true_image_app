@@ -46,7 +46,6 @@ export function ensureDemoPurchase() {
       if (oc > 0) continue;
 
       const purchasedAt = new Date().toISOString();
-      db.prepare(`UPDATE images SET is_sold = 1 WHERE id = ?`).run(imageId);
       db.prepare(
         `
         INSERT INTO orders (buyer_user_id, image_id, price, payment_method, order_status, purchased_at)
