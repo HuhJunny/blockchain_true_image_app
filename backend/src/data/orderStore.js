@@ -1,11 +1,18 @@
 import db from "./db.js";
 
+const normalizeTxHash = (raw) => String(raw ?? "").trim().toLowerCase();
+
 /**
- * 단일 트랜잭션: 판매 가능 이미지면 is_sold 갱신 후 PAID 주문 생성.
- * @returns {{ ok: true, orderId, imageId, price, orderStatus, purchasedAt } | { error: 'NOT_FOUND'|'SOLD'|'SELF' }}
+ * PAID 주문 생성. 동일 buyer+image_id 또는 동일 tx_hash 중복 시 거부.
+ * @returns {{ ok: true, orderId, imageId, price, orderStatus, purchasedAt, txHash } | { error: 'NOT_FOUND'|'SELF'|'ALREADY_PURCHASED'|'DUPLICATE_TX' }}
  */
-export function createPaidOrder({ buyerUserId, imageId, paymentMethod }) {
-  const txn = db.transaction((buyerId, imgId, payMethod) => {
+export function createPaidOrder({ buyerUserId, imageId, paymentMethod, txHash }) {
+  const normalizedTx = normalizeTxHash(txHash);
+  if (!normalizedTx) {
+    return { error: "INVALID_TX" };
+  }
+
+  const txn = db.transaction((buyerId, imgId, payMethod, tx) => {
     const image = db
       .prepare(`SELECT id, user_id, price FROM images WHERE id = ?`)
       .get(imgId);
@@ -15,15 +22,38 @@ export function createPaidOrder({ buyerUserId, imageId, paymentMethod }) {
     if (image.user_id === buyerId) {
       return { error: "SELF" };
     }
+
+    const existingPurchase = db
+      .prepare(
+        `
+        SELECT id FROM orders
+        WHERE buyer_user_id = ? AND image_id = ?
+        LIMIT 1
+        `
+      )
+      .get(buyerId, imgId);
+    if (existingPurchase) {
+      return { error: "ALREADY_PURCHASED" };
+    }
+
+    const existingTx = db
+      .prepare(`SELECT id FROM orders WHERE tx_hash = ? LIMIT 1`)
+      .get(tx);
+    if (existingTx) {
+      return { error: "DUPLICATE_TX" };
+    }
+
     const purchasedAt = new Date().toISOString();
     const ins = db
       .prepare(
         `
-        INSERT INTO orders (buyer_user_id, image_id, price, payment_method, order_status, purchased_at)
-        VALUES (?, ?, ?, ?, 'PAID', ?)
+        INSERT INTO orders (
+          buyer_user_id, image_id, price, payment_method, order_status, purchased_at, tx_hash
+        )
+        VALUES (?, ?, ?, ?, 'PAID', ?, ?)
         `
       )
-      .run(buyerId, imgId, image.price, payMethod, purchasedAt);
+      .run(buyerId, imgId, image.price, payMethod, purchasedAt, tx);
 
     return {
       ok: true,
@@ -32,10 +62,11 @@ export function createPaidOrder({ buyerUserId, imageId, paymentMethod }) {
       price: image.price,
       orderStatus: "PAID",
       purchasedAt,
+      txHash: tx,
     };
   });
 
-  return txn(buyerUserId, imageId, paymentMethod);
+  return txn(buyerUserId, imageId, paymentMethod, normalizedTx);
 }
 
 /**
@@ -53,7 +84,8 @@ export function listOrdersByBuyerPaged(buyerUserId, page, pageSize) {
         i.thumbnail_url,
         o.price,
         o.order_status,
-        o.purchased_at
+        o.purchased_at,
+        o.tx_hash
       FROM orders o
       INNER JOIN images i ON i.id = o.image_id
       WHERE o.buyer_user_id = ?
@@ -71,6 +103,7 @@ export function listOrdersByBuyerPaged(buyerUserId, page, pageSize) {
     price: row.price,
     orderStatus: row.order_status,
     purchasedAt: row.purchased_at,
+    txHash: row.tx_hash,
   }));
 }
 
@@ -78,7 +111,9 @@ export function getOrderById(orderId) {
   const id = Number(orderId);
   if (!Number.isInteger(id) || id < 1) return null;
   const row = db
-    .prepare(`SELECT id, buyer_user_id, image_id, order_status FROM orders WHERE id = ?`)
+    .prepare(
+      `SELECT id, buyer_user_id, image_id, order_status, tx_hash FROM orders WHERE id = ?`
+    )
     .get(id);
   if (!row) return null;
   return {
@@ -86,6 +121,34 @@ export function getOrderById(orderId) {
     buyerUserId: row.buyer_user_id,
     imageId: row.image_id,
     orderStatus: row.order_status,
+    txHash: row.tx_hash,
+  };
+}
+
+export function findOrderByTxHash(txHash) {
+  const normalizedTx = normalizeTxHash(txHash);
+  if (!normalizedTx) return null;
+
+  const row = db
+    .prepare(
+      `
+      SELECT id, buyer_user_id, image_id, price, order_status, tx_hash, purchased_at
+      FROM orders
+      WHERE tx_hash = ?
+      `
+    )
+    .get(normalizedTx);
+
+  if (!row) return null;
+
+  return {
+    orderId: row.id,
+    buyerUserId: row.buyer_user_id,
+    imageId: row.image_id,
+    price: row.price,
+    orderStatus: row.order_status,
+    txHash: row.tx_hash,
+    purchasedAt: row.purchased_at,
   };
 }
 

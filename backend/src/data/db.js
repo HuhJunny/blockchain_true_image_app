@@ -89,6 +89,36 @@ CREATE TABLE IF NOT EXISTS watermarked_delivery_hashes (
   FOREIGN KEY (image_id) REFERENCES images(id),
   FOREIGN KEY (order_id) REFERENCES orders(id)
 );
+
+CREATE TABLE IF NOT EXISTS contract_purchase_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  tx_hash TEXT NOT NULL UNIQUE,
+  buyer_address TEXT NOT NULL,
+  owner_address TEXT NOT NULL,
+  image_hash TEXT NOT NULL,
+  amount INTEGER NOT NULL,
+  block_number INTEGER,
+  event_timestamp INTEGER,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS pending_purchases (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  buyer_user_id INTEGER NOT NULL,
+  buyer_wallet_address TEXT NOT NULL,
+  image_id INTEGER NOT NULL,
+  payment_method TEXT NOT NULL,
+  tx_hash TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL DEFAULT 'PENDING',
+  order_id INTEGER,
+  failure_code TEXT,
+  failure_message TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (buyer_user_id) REFERENCES users(id),
+  FOREIGN KEY (image_id) REFERENCES images(id),
+  FOREIGN KEY (order_id) REFERENCES orders(id)
+);
 `);
 
 const existingImageCols = db.prepare(`PRAGMA table_info(images)`).all().map((c) => c.name);
@@ -98,5 +128,27 @@ if (!existingImageCols.includes("is_sold")) {
 if (!existingImageCols.includes("block_number")) {
   db.exec(`ALTER TABLE images ADD COLUMN block_number INTEGER`);
 }
+if (!existingImageCols.includes("perceptual_hash")) {
+  db.exec(`ALTER TABLE images ADD COLUMN perceptual_hash TEXT`);
+}
+db.exec(`
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_images_image_hash
+  ON images(image_hash)
+`);
+
+const existingOrderCols = db.prepare(`PRAGMA table_info(orders)`).all().map((c) => c.name);
+if (!existingOrderCols.includes("tx_hash")) {
+  db.exec(`ALTER TABLE orders ADD COLUMN tx_hash TEXT`);
+  db.exec(`
+    UPDATE orders
+    SET tx_hash = '0x' || printf('%060d', id) || printf('%04x', id)
+    WHERE tx_hash IS NULL OR TRIM(tx_hash) = ''
+  `);
+}
+db.exec(`
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_tx_hash
+  ON orders(tx_hash)
+  WHERE tx_hash IS NOT NULL AND TRIM(tx_hash) != ''
+`);
 
 export default db;

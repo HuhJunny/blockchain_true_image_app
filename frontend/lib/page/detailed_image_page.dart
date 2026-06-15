@@ -199,13 +199,24 @@ class _DetailedImagePageState extends State<DetailedImagePage> {
         ),
       );
 
-      final order = await OrderApi.createOrder(detail.id!);
+      final txHash = result?.toString().trim() ?? '';
+      if (txHash.isEmpty) {
+        throw Exception('Transaction hash is missing.');
+      }
+
+      final initial = await OrderApi.createOrder(detail.id!, txHash);
+      final Map<String, dynamic> order;
+      if (initial['status']?.toString() == 'COMPLETED') {
+        order = initial;
+      } else {
+        order = await OrderApi.waitForOrderCompletion(txHash);
+      }
 
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'Purchase recorded. Order #${order['orderId']} / tx $result',
+            'Purchase recorded. Order #${order['orderId']} / tx $txHash',
           ),
         ),
       );

@@ -4,6 +4,13 @@ import path from "path";
 
 let providerInstance = null;
 let contractInstance = null;
+let readOnlyContractInstance = null;
+
+const DEFAULT_CONTRACT_ADDRESS = "0x6154ab54f64106e00C715EBfC7cE6ce8C5dfF9CB";
+const DEFAULT_ABI_PATH = path.resolve(
+  process.cwd(),
+  "../smart_contract/ignition/deployments/image-authenticator-20260423/artifacts/ImageAuthenticatorModule#ImageAuthenticator.json"
+);
 
 const getRequiredEnv = (key) => {
   const value = process.env[key];
@@ -13,7 +20,7 @@ const getRequiredEnv = (key) => {
   return value.trim();
 };
 
-const getProvider = () => {
+export const getProvider = () => {
   if (providerInstance) {
     return providerInstance;
   }
@@ -23,17 +30,10 @@ const getProvider = () => {
   return providerInstance;
 };
 
-const getContract = () => {
-  if (contractInstance) {
-    return contractInstance;
-  }
-
-  const contractAddress = getRequiredEnv("BLOCKCHAIN_CONTRACT_ADDRESS");
-  const privateKey = getRequiredEnv("BLOCKCHAIN_PRIVATE_KEY");
+const loadContractAbi = () => {
   const abiPath = process.env.BLOCKCHAIN_CONTRACT_ABI_PATH?.trim();
   const abiJsonFromEnv = process.env.BLOCKCHAIN_CONTRACT_ABI_JSON?.trim();
 
-  let contractAbi;
   if (abiPath) {
     const resolvedPath = path.resolve(process.cwd(), abiPath);
     if (!fs.existsSync(resolvedPath)) {
@@ -41,34 +41,78 @@ const getContract = () => {
     }
     const raw = fs.readFileSync(resolvedPath, "utf-8");
     const parsed = JSON.parse(raw);
-    contractAbi = Array.isArray(parsed) ? parsed : parsed.abi;
-  } else if (abiJsonFromEnv) {
+    return Array.isArray(parsed) ? parsed : parsed.abi;
+  }
+
+  if (abiJsonFromEnv) {
     try {
-      contractAbi = JSON.parse(abiJsonFromEnv);
+      return JSON.parse(abiJsonFromEnv);
     } catch {
       throw new Error("BLOCKCHAIN_CONTRACT_ABI_JSON 파싱에 실패했습니다.");
     }
-  } else {
-    throw new Error("BLOCKCHAIN_CONTRACT_ABI_PATH 또는 BLOCKCHAIN_CONTRACT_ABI_JSON이 필요합니다.");
   }
 
+  if (fs.existsSync(DEFAULT_ABI_PATH)) {
+    const raw = fs.readFileSync(DEFAULT_ABI_PATH, "utf-8");
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : parsed.abi;
+  }
+
+  throw new Error(
+    "BLOCKCHAIN_CONTRACT_ABI_PATH, BLOCKCHAIN_CONTRACT_ABI_JSON 또는 기본 ABI 경로가 필요합니다."
+  );
+};
+
+export const getContractAddress = () =>
+  String(
+    process.env.BLOCKCHAIN_CONTRACT_ADDRESS ??
+      process.env.IMAGE_AUTHENTICATOR_CONTRACT ??
+      process.env.CONTRACT_ADDRESS ??
+      DEFAULT_CONTRACT_ADDRESS
+  ).trim();
+
+export const getReadOnlyContract = () => {
+  if (readOnlyContractInstance) {
+    return readOnlyContractInstance;
+  }
+
+  const contractAbi = loadContractAbi();
+  if (!Array.isArray(contractAbi)) {
+    throw new Error("ABI 형식이 올바르지 않습니다. 배열(abi)이 필요합니다.");
+  }
+
+  readOnlyContractInstance = new ethers.Contract(
+    getContractAddress(),
+    contractAbi,
+    getProvider()
+  );
+  return readOnlyContractInstance;
+};
+
+const getContract = () => {
+  if (contractInstance) {
+    return contractInstance;
+  }
+
+  const privateKey = getRequiredEnv("BLOCKCHAIN_PRIVATE_KEY");
+  const contractAbi = loadContractAbi();
   if (!Array.isArray(contractAbi)) {
     throw new Error("ABI 형식이 올바르지 않습니다. 배열(abi)이 필요합니다.");
   }
 
   const wallet = new ethers.Wallet(privateKey, getProvider());
-  contractInstance = new ethers.Contract(contractAddress, contractAbi, wallet);
+  contractInstance = new ethers.Contract(getContractAddress(), contractAbi, wallet);
   return contractInstance;
 };
 
-const parseImageRegisteredEvent = (contract, receipt) => {
+const parseEventFromReceipt = (contract, receipt, eventName) => {
   if (!receipt?.logs?.length) {
     return null;
   }
   for (const log of receipt.logs) {
     try {
       const parsed = contract.interface.parseLog(log);
-      if (parsed?.name === "ImageRegistered") {
+      if (parsed?.name === eventName) {
         return parsed.args;
       }
     } catch {
@@ -77,6 +121,23 @@ const parseImageRegisteredEvent = (contract, receipt) => {
   }
   return null;
 };
+
+export const parseImagePurchasedFromReceipt = (receipt) => {
+  const contract = getReadOnlyContract();
+  const args = parseEventFromReceipt(contract, receipt, "ImagePurchased");
+  if (!args) return null;
+
+  return {
+    buyer: args.buyer?.toString?.() ?? null,
+    owner: args.owner?.toString?.() ?? null,
+    pHash: args.pHash?.toString?.() ?? null,
+    amount: args.amount?.toString?.() ?? null,
+    timestamp: args.timestamp?.toString?.() ?? null,
+  };
+};
+
+const parseImageRegisteredEvent = (contract, receipt) =>
+  parseEventFromReceipt(contract, receipt, "ImageRegistered");
 
 export const registerImageHashOnChain = async ({ imageHash, price, metadata = "" }) => {
   const expectedChainId = process.env.BLOCKCHAIN_CHAIN_ID
