@@ -4,12 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:reown_appkit/reown_appkit.dart';
-import '../api/api_client.dart';
-import '../core/token_storage.dart';
 
+import '../api/api_client.dart';
 import '../api/image_api.dart';
 import '../api/user_api.dart';
 import '../core/network_image_view.dart';
+import '../core/token_storage.dart';
 import 'detailed_image_page.dart';
 import 'gallery_page.dart';
 import 'my_gallery_page.dart';
@@ -28,6 +28,8 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   int _selectedIndex = 0;
   late Future<_HomeData> _homeFuture;
+
+  int _myGalleryRefreshKey = 0;
 
   bool _isHashVerifying = false;
   String? _lastVerifyMessage;
@@ -62,6 +64,13 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
+  void _refreshAfterUpload() {
+    setState(() {
+      _homeFuture = _loadHome();
+      _myGalleryRefreshKey++;
+    });
+  }
+
   Future<void> _captureAndVerifyImageHash() async {
     if (_isHashVerifying) return;
 
@@ -85,6 +94,7 @@ class _HomePageState extends State<HomePage> {
       }
 
       if (!mounted) return;
+
       setState(() {
         _lastVerifyMessage = '이미지 검증 중...';
       });
@@ -118,16 +128,20 @@ class _HomePageState extends State<HomePage> {
               .toString()
               .toUpperCase();
 
-      final rawImageId = data['imageId'];
-      final int? imageId = rawImageId is num
-          ? rawImageId.toInt()
-          : int.tryParse(rawImageId?.toString() ?? '');
+      final isMatched =
+          verificationStatus == 'MATCHED' ||
+          verificationStatus == 'MATCHED_WATERMARK';
 
       final imageHash =
           (data['imageHash'] ?? data['contentHash'] ?? data['hash'] ?? '')
               .toString();
 
       final reason = (data['reason'] ?? data['message'] ?? '').toString();
+
+      final rawImageId = data['imageId'];
+      final int? imageId = rawImageId is num
+          ? rawImageId.toInt()
+          : int.tryParse(rawImageId?.toString() ?? '');
 
       if (!mounted) return;
 
@@ -139,9 +153,10 @@ class _HomePageState extends State<HomePage> {
       });
 
       _showHashVerifyResultDialog(
+        imageHash: imageHash.isEmpty ? '응답에 imageHash가 없습니다.' : imageHash,
+        isVerified: isMatched,
         verificationStatus: verificationStatus,
         imageId: imageId,
-        imageHash: imageHash.isEmpty ? '응답에 imageHash가 없습니다.' : imageHash,
         reason: reason.isEmpty ? null : reason,
       );
     } catch (e) {
@@ -163,7 +178,7 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  String _buildVerifyResultMessage(String status, String reason) {
+  String _buildVerifyResultMessage(String status, String? reason) {
     switch (status) {
       case 'MATCHED':
         return '검증 성공: 등록 원본 이미지와 SHA-256 해시가 일치합니다.';
@@ -172,81 +187,168 @@ class _HomePageState extends State<HomePage> {
       case 'NOT_MATCHED':
         return '검증 실패: 등록 원본 또는 워터마크 이미지와 일치하지 않습니다.';
       default:
-        return reason.isNotEmpty ? reason : '검증 결과를 확인할 수 없습니다.';
+        return reason != null && reason.isNotEmpty
+            ? '검증 실패: $reason'
+            : '검증 결과를 확인할 수 없습니다.';
     }
   }
 
   void _showHashVerifyResultDialog({
-    required String verificationStatus,
     required String imageHash,
+    required bool isVerified,
+    required String verificationStatus,
     int? imageId,
     String? reason,
   }) {
-    final bool isMatched =
-        verificationStatus == 'MATCHED' ||
-        verificationStatus == 'MATCHED_WATERMARK';
+    String titleText;
+    String descriptionText;
+    IconData icon;
+    Color iconColor;
 
-    final String titleText;
-    final String descriptionText;
-
-    if (verificationStatus == 'MATCHED') {
-      titleText = '원본 이미지 검증 성공';
-      descriptionText = '촬영한 이미지가 등록된 원본 이미지와 일치합니다.';
-    } else if (verificationStatus == 'MATCHED_WATERMARK') {
-      titleText = '워터마크 이미지 검증 성공';
-      descriptionText = '촬영한 이미지가 플랫폼에서 발급한 워터마크 이미지와 일치합니다.';
-    } else if (verificationStatus == 'NOT_MATCHED') {
-      titleText = '검증 실패';
-      descriptionText = '등록된 원본 이미지 또는 워터마크 이미지와 일치하지 않습니다.';
-    } else {
-      titleText = '검증 결과 확인 필요';
-      descriptionText = reason ?? '서버 검증 결과를 확인할 수 없습니다.';
+    switch (verificationStatus) {
+      case 'MATCHED':
+        titleText = '원본 이미지 검증 성공';
+        descriptionText = '촬영한 이미지의 SHA-256 해시가 등록 원본 이미지와 일치합니다.';
+        icon = Icons.verified_rounded;
+        iconColor = Colors.blue;
+        break;
+      case 'MATCHED_WATERMARK':
+        titleText = '워터마크 이미지 검증 성공';
+        descriptionText = '촬영한 이미지가 플랫폼에서 발급한 워터마크 이미지와 일치합니다.';
+        icon = Icons.verified_user_rounded;
+        iconColor = Colors.blue;
+        break;
+      case 'NOT_MATCHED':
+        titleText = '검증 실패';
+        descriptionText = '등록된 원본 이미지 또는 워터마크 이미지와 일치하지 않습니다.';
+        icon = Icons.warning_amber_rounded;
+        iconColor = Colors.orange;
+        break;
+      default:
+        titleText = isVerified ? '검증 성공' : '검증 결과 확인 필요';
+        descriptionText = reason ?? '서버 검증 결과를 확인해주세요.';
+        icon = isVerified ? Icons.verified_rounded : Icons.info_outline_rounded;
+        iconColor = isVerified ? Colors.blue : Colors.orange;
     }
 
     showDialog(
       context: context,
       builder: (dialogContext) {
-        return AlertDialog(
-          title: Row(
-            children: [
-              Icon(
-                isMatched ? Icons.verified : Icons.warning_amber_rounded,
-                color: isMatched ? Colors.blue : Colors.orange,
-              ),
-              const SizedBox(width: 8),
-              Expanded(child: Text(titleText)),
-            ],
+        return Dialog(
+          backgroundColor: Colors.transparent,
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 24,
+            vertical: 24,
           ),
-          content: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(descriptionText),
-                const SizedBox(height: 16),
-                const Text(
-                  'Verification Result',
-                  style: TextStyle(fontWeight: FontWeight.w700),
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(22, 22, 22, 18),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(24),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x22000000),
+                  blurRadius: 24,
+                  offset: Offset(0, 12),
                 ),
-                const SizedBox(height: 12),
-                _VerifyInfoRow(label: 'Status', value: verificationStatus),
-                if (imageId != null)
-                  _VerifyInfoRow(label: 'Image ID', value: imageId.toString()),
-                _VerifyInfoRow(
-                  label: 'SHA-256',
-                  value: imageHash,
-                  selectable: true,
-                ),
-                if (reason != null && reason.isNotEmpty)
-                  _VerifyInfoRow(label: 'Reason', value: reason),
               ],
             ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('확인'),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        width: 46,
+                        height: 46,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF3F4F6),
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: Icon(icon, color: iconColor, size: 28),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Text(
+                          titleText,
+                          style: const TextStyle(
+                            fontSize: 22,
+                            fontWeight: FontWeight.w800,
+                            color: Colors.black,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 18),
+                  Text(
+                    descriptionText,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      color: Color(0xFF555555),
+                      height: 1.45,
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF9FAFB),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: const Color(0xFFE5E7EB)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Verification Result',
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        _VerifyInfoRow(
+                          label: 'Status',
+                          value: verificationStatus,
+                        ),
+                        if (imageId != null)
+                          _VerifyInfoRow(
+                            label: 'Image ID',
+                            value: imageId.toString(),
+                          ),
+                        _VerifyInfoRow(
+                          label: 'SHA-256',
+                          value: imageHash,
+                          selectable: true,
+                        ),
+                        if (reason != null && reason.isNotEmpty)
+                          _VerifyInfoRow(label: 'Reason', value: reason),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton(
+                      onPressed: () => Navigator.pop(dialogContext),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: Colors.black,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                      child: const Text('확인'),
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ],
+          ),
         );
       },
     );
@@ -272,7 +374,7 @@ class _HomePageState extends State<HomePage> {
               ),
             ),
           ).then((changed) {
-            if (changed == true) _refreshHome();
+            if (changed == true) _refreshAfterUpload();
           });
         },
         onOpenGallery: () {
@@ -286,7 +388,10 @@ class _HomePageState extends State<HomePage> {
         },
       ),
       const SizedBox.shrink(),
-      MyGalleryPage(appKitModal: widget.appKitModal),
+      MyGalleryPage(
+        key: ValueKey(_myGalleryRefreshKey),
+        appKitModal: widget.appKitModal,
+      ),
       UserInfoPage(appKitModal: widget.appKitModal),
     ];
 
@@ -307,7 +412,7 @@ class _HomePageState extends State<HomePage> {
                 ),
               ),
             ).then((changed) {
-              if (changed == true) _refreshHome();
+              if (changed == true) _refreshAfterUpload();
             });
             return;
           }
@@ -499,19 +604,45 @@ class _HomeContent extends StatelessWidget {
                   const SizedBox(height: 12),
                   Container(
                     width: double.infinity,
-                    padding: const EdgeInsets.all(12),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 13,
+                    ),
                     decoration: BoxDecoration(
                       color: const Color(0xFFF9FAFB),
-                      borderRadius: BorderRadius.circular(12),
+                      borderRadius: BorderRadius.circular(14),
                       border: Border.all(color: const Color(0xFFE5E7EB)),
                     ),
-                    child: Text(
-                      lastVerifyMessage!,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        fontSize: 13,
-                        color: Colors.black87,
-                      ),
+                    child: Row(
+                      children: [
+                        if (isHashVerifying)
+                          const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        else
+                          Icon(
+                            lastVerifyMessage!.startsWith('검증 성공')
+                                ? Icons.verified_rounded
+                                : Icons.info_outline_rounded,
+                            size: 20,
+                            color: lastVerifyMessage!.startsWith('검증 성공')
+                                ? Colors.blue
+                                : Colors.black54,
+                          ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            lastVerifyMessage!,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              color: Colors.black87,
+                              height: 1.35,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ],
@@ -932,7 +1063,7 @@ class ImageItem {
       thumbnailUrl: (json['thumbnailUrl'] ?? '').toString(),
       isFavorite: false,
       hasDerivative: false,
-      verified: status == 'VERIFIED' || status == 'MATCHED',
+      verified: status == 'VERIFIED',
     );
   }
 }

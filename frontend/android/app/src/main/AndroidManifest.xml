@@ -46,7 +46,9 @@
                 <category android:name="android.intent.category.BROWSABLE" />
 
                 <!-- temp_login_page.dart의 native: 'imagechain://' 와 맞춰야 함 -->
-                <data android:scheme="imagechain" />
+                <data
+                    android:scheme="imagechain"
+                    android:host="wc" />
             </intent-filter>
 
         </activity>

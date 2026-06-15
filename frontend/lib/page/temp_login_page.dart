@@ -89,7 +89,7 @@ class _TempLoginPageState extends State<TempLoginPage> {
         description: 'Blockchain image verification market',
         url: 'https://imagechain.example.com',
         icons: ['https://imagechain.example.com/icon.png'],
-        redirect: Redirect(native: 'imagechain://'),
+        redirect: Redirect(native: 'imagechain://wc',),
       ),
       optionalNamespaces: debugPageSepoliaNamespaces,
     );
