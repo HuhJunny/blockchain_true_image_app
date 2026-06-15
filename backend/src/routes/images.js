@@ -6,6 +6,7 @@ import multer from "multer";
 import {
   createImage,
   deleteImageById,
+  findImageByContentHash,
   getImageById,
   listDistinctImageCategories,
   listImagesPaged,
@@ -22,6 +23,7 @@ import {
 import { upsertWatermarkedDeliveryHash } from "../data/watermarkDeliveryStore.js";
 import { findUserByEmail, findUserByGoogleId, findUserById, findUserByWalletAddress } from "../data/userStore.js";
 import { writeWatermarkedCopy } from "../services/watermarkService.js";
+import { computePerceptualHash } from "../services/perceptualHashService.js";
 import { optionalVerifyToken, verifyToken } from "../middlewares/authMiddleware.js";
 
 const router = express.Router();
@@ -338,7 +340,6 @@ router.get("/:imageId", verifyToken, (req, res) => {
         blockNumber: image.blockNumber ?? 0,
       },
       isOwner: currentUser.id === image.userId,
-      isSold: image.isSold,
       purchasedOrderId,
     });
   } catch (error) {
@@ -432,7 +433,7 @@ router.delete("/:imageId", verifyToken, (req, res) => {
   }
 });
 
-router.post("/", verifyToken, upload.single("image"), (req, res) => {
+router.post("/", verifyToken, upload.single("image"), async (req, res) => {
   try {
     const currentUser = getCurrentUser(req);
     if (!currentUser) {
@@ -486,6 +487,23 @@ router.post("/", verifyToken, upload.single("image"), (req, res) => {
       return res.status(400).json({ message: "imageHash가 업로드 파일 내용과 일치하지 않습니다." });
     }
 
+    const existing = findImageByContentHash(computedHash);
+    if (existing) {
+      return res.status(409).json({
+        message: "이미 등록된 동일 이미지입니다.",
+        imageId: existing.id,
+        imageHash: existing.imageHash,
+        txHash: existing.txHash,
+      });
+    }
+
+    let perceptualHash = null;
+    try {
+      perceptualHash = await computePerceptualHash(req.file.buffer);
+    } catch (hashError) {
+      console.warn("[POST /images] perceptual hash 계산 실패:", hashError?.message || hashError);
+    }
+
     const extension = path.extname(req.file.originalname || "").toLowerCase() || ".jpg";
     const baseName = `${Date.now()}-${crypto.randomBytes(6).toString("hex")}`;
     const originalFilename = `${baseName}${extension}`;
@@ -526,6 +544,7 @@ router.post("/", verifyToken, upload.single("image"), (req, res) => {
       verificationStatus,
       txHash: String(txHash).trim(),
       blockNumber,
+      perceptualHash,
     });
 
     return res.status(201).json({
