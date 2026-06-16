@@ -22,7 +22,6 @@ const toImage = (row) =>
           row.block_number !== undefined && row.block_number !== null
             ? Number(row.block_number)
             : null,
-        isSold: false,
         createdAt: row.created_at,
       }
     : null;
@@ -33,7 +32,6 @@ const mapRowToListItem = (row) => ({
   thumbnailUrl: row.thumbnail_url,
   price: row.price,
   verificationStatus: row.verification_status,
-  isSold: false,
 });
 
 export const createImage = ({
@@ -50,6 +48,7 @@ export const createImage = ({
   verificationStatus,
   txHash,
   blockNumber = null,
+  perceptualHash = null,
 }) => {
   const result = db
     .prepare(
@@ -57,9 +56,9 @@ export const createImage = ({
       INSERT INTO images (
         user_id, title, description, price, category,
         device_id, captured_at, image_url, thumbnail_url,
-        image_hash, verification_status, tx_hash, block_number, is_sold, created_at
+        image_hash, verification_status, tx_hash, block_number, perceptual_hash, created_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, datetime('now'))
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
       `
     )
     .run(
@@ -75,7 +74,8 @@ export const createImage = ({
       imageHash,
       verificationStatus,
       txHash,
-      blockNumber
+      blockNumber,
+      perceptualHash
     );
 
   return getImageById(result.lastInsertRowid);
@@ -88,7 +88,7 @@ export const getImageById = (id) =>
         `
         SELECT id, user_id, title, description, price, category, device_id, captured_at,
                image_url, thumbnail_url, image_hash, verification_status, tx_hash,
-               block_number, is_sold, created_at
+               block_number, created_at
         FROM images
         WHERE id = ?
         `
@@ -119,6 +119,27 @@ export function findImageByContentHash(normalizedHashLower) {
   };
 }
 
+/** L3 유사도 검증용 — perceptual_hash가 있는 등록 이미지 목록 */
+export function listImagesWithPerceptualHash() {
+  const rows = db
+    .prepare(
+      `
+      SELECT id, image_hash, tx_hash, perceptual_hash
+      FROM images
+      WHERE perceptual_hash IS NOT NULL AND TRIM(perceptual_hash) != ''
+      ORDER BY id ASC
+      `
+    )
+    .all();
+
+  return rows.map((row) => ({
+    id: row.id,
+    imageHash: row.image_hash,
+    txHash: row.tx_hash,
+    perceptualHash: row.perceptual_hash,
+  }));
+}
+
 export const deleteImageById = (id) => {
   db.prepare(`DELETE FROM image_favorites WHERE image_id = ?`).run(id);
   const result = db.prepare(`DELETE FROM images WHERE id = ?`).run(id);
@@ -131,7 +152,7 @@ export const getAllImages = () =>
       `
       SELECT id, user_id, title, description, price, category, device_id, captured_at,
              image_url, thumbnail_url, image_hash, verification_status, tx_hash,
-             block_number, is_sold, created_at
+             block_number, created_at
       FROM images
       ORDER BY id DESC
       `
@@ -163,8 +184,7 @@ export function listImagesPaged({ page, pageSize, sort }) {
       i.title,
       i.thumbnail_url,
       i.price,
-      i.verification_status,
-      COALESCE(i.is_sold, 0) AS is_sold
+      i.verification_status
     FROM images i
     ${joinPopular}
     ${orderClause}
@@ -250,7 +270,6 @@ const mapRowToMyUploadItem = (row) => ({
   thumbnailUrl: row.thumbnail_url,
   price: row.price,
   verificationStatus: row.verification_status,
-  isSold: false,
   createdAt: toIso8601UtcZ(row.created_at),
 });
 
@@ -260,7 +279,7 @@ export function listImagesByUserPaged(userId, page, pageSize) {
   const rows = db
     .prepare(
       `
-      SELECT id, title, thumbnail_url, price, verification_status, is_sold, created_at
+      SELECT id, title, thumbnail_url, price, verification_status, created_at
       FROM images
       WHERE user_id = ?
       ORDER BY id DESC
