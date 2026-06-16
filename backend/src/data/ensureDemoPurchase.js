@@ -12,6 +12,9 @@ export const DEMO_PURCHASE_WALLET = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
 const HARDHAT_ACCOUNT_1_PRIVATE_KEY =
   "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
 
+const demoTxHashForImage = (imageId) =>
+  `0x${"d".repeat(60)}${Number(imageId).toString(16).padStart(4, "0")}`;
+
 /**
  * 1) 데모 이미지에 걸린 DEMO_SEED 주문은 모두 Hardhat #1 구매자로 통일 (어느 지갑으로 시드됐든 표시되게).
  * 2) Hardhat #1에게 주문이 하나도 없으면, 주문이 없는 시드 이미지부터 하나 골라 DEMO_SEED 구매를 만든다.
@@ -46,14 +49,16 @@ export function ensureDemoPurchase() {
       if (oc > 0) continue;
 
       const purchasedAt = new Date().toISOString();
-      db.prepare(`UPDATE images SET is_sold = 1 WHERE id = ?`).run(imageId);
+      const demoTxHash = demoTxHashForImage(imageId);
       db.prepare(
         `
-        INSERT INTO orders (buyer_user_id, image_id, price, payment_method, order_status, purchased_at)
-        SELECT ?, id, price, 'DEMO_SEED', 'PAID', ?
+        INSERT INTO orders (
+          buyer_user_id, image_id, price, payment_method, order_status, purchased_at, tx_hash
+        )
+        SELECT ?, id, price, 'DEMO_SEED', 'PAID', ?, ?
         FROM images WHERE id = ?
         `
-      ).run(buyer.id, purchasedAt, imageId);
+      ).run(buyer.id, purchasedAt, demoTxHash, imageId);
 
       console.log(`[dummy] 데모 구매 신규 생성: image_id=${imageId}, buyer=Hardhat #1`);
       hardhatOrderCount += 1;
