@@ -1,12 +1,16 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
-import '../api/image_api.dart';
 import 'package:convert/convert.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:reown_appkit/reown_appkit.dart';
+
+import '../api/api_client.dart';
+import '../api/image_api.dart';
+import '../core/token_storage.dart';
 
 class UploadPage extends StatefulWidget {
   final bool openCameraOnStart;
@@ -36,6 +40,14 @@ class _UploadPageState extends State<UploadPage> {
   Uint8List? _imageBytes;
   XFile? _pickedImage;
   bool _isRegistering = false;
+  bool _isPreVerifying = false;
+  String? _preVerifyStatus;
+  String? _preVerifyMessage;
+
+  bool get _isDuplicateSelectedImage =>
+      _preVerifyStatus == 'MATCHED' || _preVerifyStatus == 'MATCHED_WATERMARK';
+
+  bool get _canUploadSelectedImage => _preVerifyStatus == 'NOT_MATCHED';
 
   String _selectedCategory = 'LANDSCAPE';
   final String _deviceId = 'device-abc-123';
@@ -70,12 +82,7 @@ class _UploadPageState extends State<UploadPage> {
 
     if (image == null) return;
 
-    final bytes = await image.readAsBytes();
-
-    setState(() {
-      _pickedImage = image;
-      _imageBytes = bytes;
-    });
+    await _setPickedImageAndVerify(image);
   }
 
   Future<void> _pickFromGallery() async {
@@ -86,12 +93,283 @@ class _UploadPageState extends State<UploadPage> {
 
     if (image == null) return;
 
+    await _setPickedImageAndVerify(image);
+  }
+
+  Future<void> _setPickedImageAndVerify(XFile image) async {
     final bytes = await image.readAsBytes();
+
+    if (!mounted) return;
 
     setState(() {
       _pickedImage = image;
       _imageBytes = bytes;
+      _preVerifyStatus = null;
+      _preVerifyMessage = '이미지 검증 중...';
+      _isPreVerifying = true;
     });
+
+    await _verifyImageBeforeUpload(image);
+  }
+
+  String _buildPreUploadVerifyMessage(String status, int? imageId) {
+    switch (status) {
+      case 'MATCHED':
+        return imageId == null
+            ? '이미 등록된 원본 이미지와 일치합니다. 중복 업로드할 수 없습니다.'
+            : '이미 등록된 원본 이미지와 일치합니다. Image ID: $imageId';
+      case 'MATCHED_WATERMARK':
+        return imageId == null
+            ? '플랫폼에서 발급한 워터마크 이미지와 일치합니다. 업로드할 수 없습니다.'
+            : '플랫폼에서 발급한 워터마크 이미지와 일치합니다. Image ID: $imageId';
+      case 'NOT_MATCHED':
+        return '신규 이미지로 확인되었습니다. 업로드를 진행할 수 있습니다.';
+      default:
+        return '이미지 검증 결과를 확인할 수 없습니다.';
+    }
+  }
+
+  Future<void> _verifyImageBeforeUpload(XFile image) async {
+    try {
+      final accessToken = await TokenStorage.getAccessToken();
+
+      if (accessToken == null || accessToken.isEmpty) {
+        throw Exception('로그인이 필요합니다. 먼저 지갑으로 로그인해주세요.');
+      }
+
+      final request = http.MultipartRequest(
+        'POST',
+        Uri.parse('${ApiClient.baseUrl}/verification/check'),
+      );
+
+      request.headers['Authorization'] = 'Bearer $accessToken';
+
+      request.files.add(await http.MultipartFile.fromPath('image', image.path));
+
+      final streamedResponse = await request.send();
+      final response = await http.Response.fromStream(streamedResponse);
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw Exception('서버 검증 실패: ${response.statusCode} ${response.body}');
+      }
+
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+
+      final status = (data['verificationStatus'] ?? data['status'] ?? 'UNKNOWN')
+          .toString()
+          .toUpperCase();
+
+      final rawImageId = data['imageId'];
+      final int? imageId = rawImageId is num
+          ? rawImageId.toInt()
+          : int.tryParse(rawImageId?.toString() ?? '');
+
+      final imageHash =
+          (data['imageHash'] ?? data['contentHash'] ?? data['hash'] ?? '')
+              .toString();
+
+      final reason = (data['reason'] ?? data['message'] ?? '').toString();
+
+      if (!mounted) return;
+
+      setState(() {
+        _preVerifyStatus = status;
+        _preVerifyMessage = _buildPreUploadVerifyMessage(status, imageId);
+      });
+
+      _showPreUploadVerifyResultDialog(
+        verificationStatus: status,
+        imageId: imageId,
+        imageHash: imageHash.isEmpty ? '응답에 imageHash가 없습니다.' : imageHash,
+        reason: reason.isEmpty ? null : reason,
+      );
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        _preVerifyStatus = 'ERROR';
+        _preVerifyMessage = '이미지 검증 실패: $e';
+      });
+
+      _showPreUploadVerifyResultDialog(
+        verificationStatus: 'ERROR',
+        imageHash: '검증 실패로 해시를 확인할 수 없습니다.',
+        reason: e.toString(),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isPreVerifying = false;
+        });
+      }
+    }
+  }
+
+  void _showPreUploadVerifyResultDialog({
+    required String verificationStatus,
+    required String imageHash,
+    int? imageId,
+    String? reason,
+  }) {
+    String titleText;
+    String descriptionText;
+    IconData icon;
+    Color iconColor;
+
+    switch (verificationStatus) {
+      case 'MATCHED':
+        titleText = '원본 이미지 검증 성공';
+        descriptionText =
+            '선택한 이미지의 SHA-256 해시가 이미 등록된 원본 이미지와 일치합니다. 중복 업로드할 수 없습니다.';
+        icon = Icons.warning_amber_rounded;
+        iconColor = Colors.orange;
+        break;
+      case 'MATCHED_WATERMARK':
+        titleText = '워터마크 이미지 검증 성공';
+        descriptionText = '선택한 이미지가 플랫폼에서 발급한 워터마크 이미지와 일치합니다. 업로드할 수 없습니다.';
+        icon = Icons.warning_amber_rounded;
+        iconColor = Colors.orange;
+        break;
+      case 'NOT_MATCHED':
+        titleText = '신규 이미지 확인';
+        descriptionText = '등록된 원본 또는 워터마크 이미지와 일치하지 않습니다. 업로드를 진행할 수 있습니다.';
+        icon = Icons.check_circle_rounded;
+        iconColor = Colors.blue;
+        break;
+      case 'ERROR':
+        titleText = '이미지 검증 실패';
+        descriptionText = reason ?? '이미지 검증 중 오류가 발생했습니다.';
+        icon = Icons.error_outline_rounded;
+        iconColor = Colors.orange;
+        break;
+      default:
+        titleText = '검증 결과 확인 필요';
+        descriptionText = reason ?? '서버 검증 결과를 확인할 수 없습니다.';
+        icon = Icons.info_outline_rounded;
+        iconColor = Colors.orange;
+    }
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) {
+        return Dialog(
+          backgroundColor: Colors.transparent,
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 24,
+            vertical: 24,
+          ),
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(22, 22, 22, 18),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(24),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x22000000),
+                  blurRadius: 24,
+                  offset: Offset(0, 12),
+                ),
+              ],
+            ),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        width: 46,
+                        height: 46,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF3F4F6),
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: Icon(icon, color: iconColor, size: 28),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Text(
+                          titleText,
+                          style: const TextStyle(
+                            fontSize: 22,
+                            fontWeight: FontWeight.w800,
+                            color: Colors.black,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 18),
+                  Text(
+                    descriptionText,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      color: Color(0xFF555555),
+                      height: 1.45,
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF9FAFB),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: const Color(0xFFE5E7EB)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Verification Result',
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        _VerifyInfoRow(
+                          label: 'Status',
+                          value: verificationStatus,
+                        ),
+                        if (imageId != null)
+                          _VerifyInfoRow(
+                            label: 'Image ID',
+                            value: imageId.toString(),
+                          ),
+                        _VerifyInfoRow(
+                          label: 'SHA-256',
+                          value: imageHash,
+                          selectable: true,
+                        ),
+                        if (reason != null && reason.isNotEmpty)
+                          _VerifyInfoRow(label: 'Reason', value: reason),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton(
+                      onPressed: () => Navigator.pop(dialogContext),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: Colors.black,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                      child: const Text('확인'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
   }
 
   void _showImageSelectSheet() {
@@ -275,6 +553,34 @@ class _UploadPageState extends State<UploadPage> {
       return;
     }
 
+    if (_isPreVerifying) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('이미지 검증이 끝난 뒤 업로드해주세요.')));
+      return;
+    }
+
+    if (_preVerifyStatus == null) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('이미지 검증이 완료된 뒤 업로드해주세요.')));
+      return;
+    }
+
+    if (_isDuplicateSelectedImage) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('이미 등록된 이미지와 일치하여 업로드할 수 없습니다.')),
+      );
+      return;
+    }
+
+    if (!_canUploadSelectedImage) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('이미지 검증이 완료된 신규 이미지만 업로드할 수 있습니다.')),
+      );
+      return;
+    }
+
     if (_isRegistering) return;
 
     final uploadData = {
@@ -448,7 +754,56 @@ class _UploadPageState extends State<UploadPage> {
                         ),
                 ),
               ),
-
+              if (_preVerifyMessage != null) ...[
+                const SizedBox(height: 12),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 13,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF9FAFB),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: const Color(0xFFE5E7EB)),
+                  ),
+                  child: Row(
+                    children: [
+                      if (_isPreVerifying)
+                        const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      else
+                        Icon(
+                          _preVerifyStatus == 'NOT_MATCHED'
+                              ? Icons.check_circle_outline
+                              : _isDuplicateSelectedImage
+                              ? Icons.warning_amber_rounded
+                              : Icons.info_outline_rounded,
+                          size: 21,
+                          color: _preVerifyStatus == 'NOT_MATCHED'
+                              ? Colors.blue
+                              : _isDuplicateSelectedImage
+                              ? Colors.orange
+                              : Colors.black54,
+                        ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          _preVerifyMessage!,
+                          style: const TextStyle(
+                            color: Colors.black87,
+                            fontSize: 13,
+                            height: 1.35,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
               const SizedBox(height: 24),
 
               _InputField(
@@ -463,7 +818,7 @@ class _UploadPageState extends State<UploadPage> {
                 label: 'Description',
                 hintText: 'Write a short description',
                 controller: _descriptionController,
-                maxLines: 2,
+                maxLines: 1,
               ),
 
               const SizedBox(height: 18),
@@ -535,7 +890,13 @@ class _UploadPageState extends State<UploadPage> {
               SizedBox(
                 width: double.infinity,
                 child: FilledButton(
-                  onPressed: _isRegistering ? null : _registerOnBlockchain,
+                  onPressed:
+                      (_isRegistering ||
+                          _isPreVerifying ||
+                          _pickedImage == null ||
+                          !_canUploadSelectedImage)
+                      ? null
+                      : _registerOnBlockchain,
                   style: FilledButton.styleFrom(
                     backgroundColor: Colors.black,
                     padding: const EdgeInsets.symmetric(vertical: 15),
@@ -543,18 +904,40 @@ class _UploadPageState extends State<UploadPage> {
                       borderRadius: BorderRadius.circular(12),
                     ),
                   ),
-                  child: _isRegistering
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
-                          ),
+                  child: (_isRegistering || _isPreVerifying)
+                      ? Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Text(
+                              _isPreVerifying ? '이미지 검증 중...' : 'Uploading...',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
                         )
-                      : const Text(
-                          'Upload & Register on Blockchain',
-                          style: TextStyle(
+                      : Text(
+                          _pickedImage == null
+                              ? '이미지를 선택해주세요'
+                              : _isDuplicateSelectedImage
+                              ? '이미 등록된 이미지'
+                              : _preVerifyStatus == 'ERROR'
+                              ? '이미지 검증 실패'
+                              : _preVerifyStatus == 'UNKNOWN'
+                              ? '검증 결과 확인 필요'
+                              : 'Upload & Register on Blockchain',
+                          style: const TextStyle(
                             color: Colors.white,
                             fontSize: 16,
                             fontWeight: FontWeight.w600,
@@ -611,6 +994,61 @@ class _UserHeader extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _VerifyInfoRow extends StatelessWidget {
+  final String label;
+  final String value;
+  final bool selectable;
+
+  const _VerifyInfoRow({
+    required this.label,
+    required this.value,
+    this.selectable = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final valueWidget = selectable
+        ? SelectableText(
+            value,
+            style: const TextStyle(
+              fontSize: 12.5,
+              color: Colors.black,
+              height: 1.35,
+            ),
+          )
+        : Text(
+            value,
+            style: const TextStyle(
+              fontSize: 13,
+              color: Colors.black,
+              fontWeight: FontWeight.w600,
+              height: 1.35,
+            ),
+          );
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 9),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 72,
+            child: Text(
+              label,
+              style: const TextStyle(
+                fontSize: 13,
+                color: Color(0xFF777777),
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          Expanded(child: valueWidget),
+        ],
+      ),
     );
   }
 }

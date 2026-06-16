@@ -141,3 +141,9 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# Backend local runtime data
+/backend/data/
+/backend/uploads/*.jpg
+/backend/uploads/*.jpeg
+/backend/uploads/*-thumb.jpg
