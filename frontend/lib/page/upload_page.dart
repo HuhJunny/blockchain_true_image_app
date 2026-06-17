@@ -1,12 +1,27 @@
-import 'dart:convert';
 import 'dart:typed_data';
 
+import '../api/contract_approval_api.dart';
 import '../api/image_api.dart';
-import 'package:convert/convert.dart';
+import '../core/contract_calldata.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:reown_appkit/reown_appkit.dart';
+
+class DuplicateImageDetectedException implements Exception {
+  final String distance;
+  final String threshold;
+  final String matchType;
+
+  const DuplicateImageDetectedException({
+    required this.distance,
+    required this.threshold,
+    required this.matchType,
+  });
+
+  @override
+  String toString() => 'Duplicate image detected.';
+}
 
 class UploadPage extends StatefulWidget {
   final bool openCameraOnStart;
@@ -24,8 +39,6 @@ class UploadPage extends StatefulWidget {
 
 class _UploadPageState extends State<UploadPage> {
   static const String _sepoliaChain = 'eip155:11155111';
-  static const String _contractAddress =
-      '0x6154ab54f64106e00C715EBfC7cE6ce8C5dfF9CB';
 
   final ImagePicker _picker = ImagePicker();
 
@@ -220,17 +233,40 @@ class _UploadPageState extends State<UploadPage> {
     return '0x${sha256.convert(bytes)}';
   }
 
-  String _buildRegisterImageCalldata(String pHash, BigInt price) {
-    const selector = '0x8f91ad9d';
-    final hashHex = hex.encode(utf8.encode(pHash));
-    final paddedHashLength = ((hashHex.length + 63) ~/ 64) * 64;
+  Future<void> _assertUploadImageIsUnique() async {
+    final pickedImage = _pickedImage;
+    final imageBytes = _imageBytes;
+    if (pickedImage == null || imageBytes == null) {
+      throw Exception('Image bytes are not ready.');
+    }
 
-    final offset = BigInt.from(64).toRadixString(16).padLeft(64, '0');
-    final priceHex = price.toRadixString(16).padLeft(64, '0');
-    final hashLength = (hashHex.length ~/ 2).toRadixString(16).padLeft(64, '0');
-    final hashEncoded = hashHex.padRight(paddedHashLength, '0');
+    final result = await ImageApi.checkUploadSimilarity(
+      fileName: pickedImage.name,
+      bytes: imageBytes,
+    );
+    final status = result['verificationStatus']?.toString() ?? 'UNKNOWN';
+    if (status == 'NOT_MATCHED') {
+      return;
+    }
 
-    return selector + offset + priceHex + hashLength + hashEncoded;
+    if (status == 'LIKELY_RESIZE') {
+      final distance = result['hammingDistance']?.toString() ?? '?';
+      final threshold = result['threshold']?.toString() ?? '?';
+      final matchType = result['matchType']?.toString() ?? 'PHASH';
+      throw DuplicateImageDetectedException(
+        distance: distance,
+        threshold: threshold,
+        matchType: matchType,
+      );
+    }
+
+    if (status == 'MATCHED' || status == 'MATCHED_WATERMARK') {
+      throw const DuplicateImageDetectedException(
+        distance: '0',
+        threshold: 'Exact match',
+        matchType: 'SHA256',
+      );
+    }
   }
 
   void _debugSession(String label, ReownAppKitModal modal) {
@@ -258,6 +294,106 @@ class _UploadPageState extends State<UploadPage> {
         '현재 승인된 체인: $approvedChains',
       );
     }
+  }
+
+  Future<void> _showDuplicateImageDialog(
+    DuplicateImageDetectedException error,
+  ) async {
+    if (!mounted) return;
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          titlePadding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+          contentPadding: const EdgeInsets.fromLTRB(24, 16, 24, 8),
+          actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          title: const Text(
+            '중복 이미지 탐지',
+            style: TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.w800,
+              color: Color(0xFF111827),
+            ),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                '동일한 사진으로 의심되어 업로드를 진행할 수 없습니다.',
+                style: TextStyle(
+                  fontSize: 15,
+                  height: 1.45,
+                  color: Color(0xFF374151),
+                ),
+              ),
+              const SizedBox(height: 18),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF9FAFB),
+                  border: Border.all(color: const Color(0xFFD1D5DB)),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      '해밍 거리 결과',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFF4B5563),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      '거리: ${error.distance}',
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFF111827),
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      '기준값: ${error.threshold}',
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF6B7280),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: Colors.black,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 18,
+                  vertical: 12,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('확인'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   Future<void> _registerOnBlockchain() async {
@@ -293,6 +429,8 @@ class _UploadPageState extends State<UploadPage> {
     });
 
     try {
+      await _assertUploadImageIsUnique();
+
       final modal = _appKitModal;
       if (!modal.isConnected || modal.session == null) {
         throw Exception(
@@ -307,13 +445,26 @@ class _UploadPageState extends State<UploadPage> {
       final from = _walletAddress(modal);
       final pHash = _imageRegistrationHash();
       final price = _registrationPrice();
-      final data = _buildRegisterImageCalldata(pHash, price);
+      final approval = await ContractApprovalApi.requestRegister(
+        pHash: pHash,
+        price: price,
+      );
+      final data = ContractCalldata.registerImage(
+        pHash: approval.pHash,
+        price: approval.price,
+        nonce: approval.nonce,
+        deadline: approval.deadline,
+        signature: approval.signature,
+      );
 
       debugPrint('[UploadPage] from=$from');
-      debugPrint('[UploadPage] to=$_contractAddress');
+      debugPrint('[UploadPage] to=${approval.contractAddress}');
       debugPrint('[UploadPage] chainId=$_sepoliaChain');
-      debugPrint('[UploadPage] pHash=$pHash');
-      debugPrint('[UploadPage] price=$price');
+      debugPrint('[UploadPage] pHash=${approval.pHash}');
+      debugPrint('[UploadPage] price=${approval.price}');
+      debugPrint('[UploadPage] nonce=${approval.nonce}');
+      debugPrint('[UploadPage] deadline=${approval.deadline}');
+      debugPrint('[UploadPage] approvalHash=${approval.approvalHash}');
       debugPrint('[UploadPage] calldata=$data');
 
       final result = await modal.request(
@@ -325,7 +476,7 @@ class _UploadPageState extends State<UploadPage> {
           params: [
             {
               'from': from,
-              'to': _contractAddress,
+              'to': approval.contractAddress,
               'data': data,
               'value': '0x0',
             },
@@ -342,9 +493,7 @@ class _UploadPageState extends State<UploadPage> {
         bytes: _imageBytes!,
         title: _titleController.text.trim(),
         description: _descriptionController.text.trim(),
-        price: _priceController.text.trim().isEmpty
-            ? '1'
-            : _priceController.text.trim(),
+        price: approval.price.toString(),
         category: _selectedCategory,
         deviceId: _deviceId,
         capturedAt: _capturedAt,
@@ -362,9 +511,14 @@ class _UploadPageState extends State<UploadPage> {
       debugPrint('[UploadPage] stackTrace: $stackTrace');
 
       if (!mounted) return;
+      if (e is DuplicateImageDetectedException) {
+        await _showDuplicateImageDialog(e);
+        return;
+      }
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Blockchain registration failed: ${_friendlyError(e)}'),
+          content: Text('Upload failed: ${_friendlyError(e)}'),
         ),
       );
     } finally {
