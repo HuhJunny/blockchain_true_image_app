@@ -4,9 +4,10 @@ import multer from "multer";
 import { findImageByContentHash, listImagesWithPerceptualHash } from "../data/imageStore.js";
 import { findImageByWatermarkedDeliveryHash } from "../data/watermarkDeliveryStore.js";
 import {
-  computePerceptualHash,
+  computePerceptualFingerprint,
   findBestPerceptualMatch,
   LIKELY_RESIZE_THRESHOLD,
+  LIKELY_REGION_THRESHOLD,
 } from "../services/perceptualHashService.js";
 import { verifyToken } from "../middlewares/authMiddleware.js";
 
@@ -66,9 +67,9 @@ router.post("/check", verifyToken, upload.single("image"), async (req, res) => {
     }
 
     try {
-      const uploadPerceptualHash = await computePerceptualHash(req.file.buffer);
+      const uploadFingerprint = await computePerceptualFingerprint(req.file.buffer);
       const candidates = listImagesWithPerceptualHash();
-      const likely = findBestPerceptualMatch(uploadPerceptualHash, candidates);
+      const likely = findBestPerceptualMatch(uploadFingerprint, candidates);
 
       if (likely) {
         return res.status(200).json({
@@ -79,7 +80,12 @@ router.post("/check", verifyToken, upload.single("image"), async (req, res) => {
           imageHash: likely.imageHash,
           txHash: likely.txHash,
           hammingDistance: likely.hammingDistance,
-          threshold: LIKELY_RESIZE_THRESHOLD,
+          threshold: likely.threshold,
+          fullThreshold: LIKELY_RESIZE_THRESHOLD,
+          regionThreshold: LIKELY_REGION_THRESHOLD,
+          matchType: likely.matchType,
+          uploadRegion: likely.uploadRegion,
+          candidateRegion: likely.candidateRegion,
           uploadedImageHash: normalized,
           message:
             "등록된 원본과 바이트는 다르지만, 리사이즈·압축된 동일 이미지일 가능성이 있습니다.",

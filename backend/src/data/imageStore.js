@@ -2,6 +2,19 @@ import db from "./db.js";
 
 export const SORT_MODES = Object.freeze(["latest", "price", "popular"]);
 
+const serializePatchHashes = (patchHashes) =>
+  patchHashes && patchHashes.length > 0 ? JSON.stringify(patchHashes) : null;
+
+const parsePatchHashes = (raw) => {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+};
+
 const toImage = (row) =>
   row
     ? {
@@ -49,6 +62,7 @@ export const createImage = ({
   txHash,
   blockNumber = null,
   perceptualHash = null,
+  perceptualPatchHashes = [],
 }) => {
   const result = db
     .prepare(
@@ -56,9 +70,10 @@ export const createImage = ({
       INSERT INTO images (
         user_id, title, description, price, category,
         device_id, captured_at, image_url, thumbnail_url,
-        image_hash, verification_status, tx_hash, block_number, perceptual_hash, created_at
+        image_hash, verification_status, tx_hash, block_number,
+        perceptual_hash, perceptual_patch_hashes, created_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
       `
     )
     .run(
@@ -75,7 +90,8 @@ export const createImage = ({
       verificationStatus,
       txHash,
       blockNumber,
-      perceptualHash
+      perceptualHash,
+      serializePatchHashes(perceptualPatchHashes)
     );
 
   return getImageById(result.lastInsertRowid);
@@ -124,7 +140,7 @@ export function listImagesWithPerceptualHash() {
   const rows = db
     .prepare(
       `
-      SELECT id, image_hash, tx_hash, perceptual_hash
+      SELECT id, image_hash, tx_hash, perceptual_hash, perceptual_patch_hashes
       FROM images
       WHERE perceptual_hash IS NOT NULL AND TRIM(perceptual_hash) != ''
       ORDER BY id ASC
@@ -137,6 +153,7 @@ export function listImagesWithPerceptualHash() {
     imageHash: row.image_hash,
     txHash: row.tx_hash,
     perceptualHash: row.perceptual_hash,
+    perceptualPatchHashes: parsePatchHashes(row.perceptual_patch_hashes),
   }));
 }
 
@@ -144,6 +161,19 @@ export const deleteImageById = (id) => {
   db.prepare(`DELETE FROM image_favorites WHERE image_id = ?`).run(id);
   const result = db.prepare(`DELETE FROM images WHERE id = ?`).run(id);
   return result.changes > 0;
+};
+
+export const updateImagePriceById = (id, price) => {
+  const result = db
+    .prepare(
+      `
+      UPDATE images
+      SET price = ?
+      WHERE id = ?
+      `
+    )
+    .run(price, id);
+  return result.changes > 0 ? getImageById(id) : null;
 };
 
 export const getAllImages = () =>

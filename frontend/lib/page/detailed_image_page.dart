@@ -1,11 +1,12 @@
-import 'dart:convert';
-
-import 'package:convert/convert.dart';
 import 'package:flutter/material.dart';
+import 'package:gal/gal.dart';
+import 'package:http/http.dart' as http;
 import 'package:reown_appkit/reown_appkit.dart';
 
+import '../api/contract_approval_api.dart';
 import '../api/image_api.dart';
 import '../api/order_api.dart';
+import '../core/contract_calldata.dart';
 import '../core/network_image_view.dart';
 
 class DetailedImagePage extends StatefulWidget {
@@ -26,10 +27,9 @@ class DetailedImagePage extends StatefulWidget {
 
 class _DetailedImagePageState extends State<DetailedImagePage> {
   static const String _sepoliaChain = 'eip155:11155111';
-  static const String _contractAddress =
-      '0x6154ab54f64106e00C715EBfC7cE6ce8C5dfF9CB';
 
   bool _isPurchasing = false;
+  bool _isUpdatingPrice = false;
 
   Future<ImageDetailInfo> _loadDetail() async {
     final id = widget.imageId;
@@ -118,18 +118,6 @@ class _DetailedImagePageState extends State<DetailedImagePage> {
     return price;
   }
 
-  String _buildPurchaseImageCalldata(String pHash) {
-    const selector = '0xeb7e0788';
-    final hashHex = hex.encode(utf8.encode(pHash));
-    final paddedHashLength = ((hashHex.length + 63) ~/ 64) * 64;
-
-    final offset = BigInt.from(32).toRadixString(16).padLeft(64, '0');
-    final hashLength = (hashHex.length ~/ 2).toRadixString(16).padLeft(64, '0');
-    final hashEncoded = hashHex.padRight(paddedHashLength, '0');
-
-    return selector + offset + hashLength + hashEncoded;
-  }
-
   Future<void> _checkVerification(
     BuildContext context,
     ImageDetailInfo detail,
@@ -173,13 +161,27 @@ class _DetailedImagePageState extends State<DetailedImagePage> {
 
       final from = _walletAddress(modal);
       final price = _purchasePrice(detail);
-      final data = _buildPurchaseImageCalldata(detail.imageHash);
-      final value = '0x${price.toRadixString(16)}';
+      final approval = await ContractApprovalApi.requestPurchase(
+        imageId: detail.id!,
+        pHash: detail.imageHash,
+        price: price,
+      );
+      final data = ContractCalldata.purchaseImage(
+        pHash: approval.pHash,
+        price: approval.price,
+        nonce: approval.nonce,
+        deadline: approval.deadline,
+        signature: approval.signature,
+      );
+      final value = '0x${approval.price.toRadixString(16)}';
 
       debugPrint('[DetailedImagePage] from=$from');
-      debugPrint('[DetailedImagePage] to=$_contractAddress');
-      debugPrint('[DetailedImagePage] pHash=${detail.imageHash}');
+      debugPrint('[DetailedImagePage] to=${approval.contractAddress}');
+      debugPrint('[DetailedImagePage] pHash=${approval.pHash}');
       debugPrint('[DetailedImagePage] value=$value');
+      debugPrint('[DetailedImagePage] nonce=${approval.nonce}');
+      debugPrint('[DetailedImagePage] deadline=${approval.deadline}');
+      debugPrint('[DetailedImagePage] approvalHash=${approval.approvalHash}');
       debugPrint('[DetailedImagePage] calldata=$data');
 
       final result = await modal.request(
@@ -191,7 +193,7 @@ class _DetailedImagePageState extends State<DetailedImagePage> {
           params: [
             {
               'from': from,
-              'to': _contractAddress,
+              'to': approval.contractAddress,
               'data': data,
               'value': value,
             },
@@ -235,6 +237,159 @@ class _DetailedImagePageState extends State<DetailedImagePage> {
     }
   }
 
+  Future<void> _promptUpdatePrice(
+    BuildContext context,
+    ImageDetailInfo detail,
+  ) async {
+    final controller = TextEditingController(
+      text: _purchasePrice(detail).toString(),
+    );
+    final nextPrice = await showDialog<BigInt>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Update Price'),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(
+              labelText: 'New price',
+              helperText: 'Enter the uint256 price sent to the contract.',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final parsed = BigInt.tryParse(controller.text.trim());
+                if (parsed == null || parsed <= BigInt.zero) {
+                  ScaffoldMessenger.of(dialogContext).showSnackBar(
+                    const SnackBar(
+                      content: Text('Enter a positive integer price.'),
+                    ),
+                  );
+                  return;
+                }
+                Navigator.pop(dialogContext, parsed);
+              },
+              child: const Text('Update'),
+            ),
+          ],
+        );
+      },
+    );
+    controller.dispose();
+
+    if (nextPrice != null && context.mounted) {
+      await _updatePrice(context, detail, nextPrice);
+    }
+  }
+
+  Future<void> _updatePrice(
+    BuildContext context,
+    ImageDetailInfo detail,
+    BigInt newPrice,
+  ) async {
+    if (detail.id == null || _isUpdatingPrice) return;
+
+    setState(() {
+      _isUpdatingPrice = true;
+    });
+
+    try {
+      final modal = _appKitModal;
+      if (!modal.isConnected || modal.session == null) {
+        throw Exception(
+          'MetaMask is not connected. Return to Wallet Login and connect first.',
+        );
+      }
+      if (detail.imageHash.isEmpty) {
+        throw Exception('Image hash is missing.');
+      }
+
+      await _ensureSepolia(modal);
+      _assertSepoliaApproved(modal);
+
+      final from = _walletAddress(modal);
+      final approval = await ContractApprovalApi.requestUpdatePrice(
+        imageId: detail.id!,
+        pHash: detail.imageHash,
+        price: newPrice,
+      );
+      final data = ContractCalldata.updatePrice(
+        pHash: approval.pHash,
+        newPrice: approval.price,
+        nonce: approval.nonce,
+        deadline: approval.deadline,
+        signature: approval.signature,
+      );
+
+      debugPrint('[DetailedImagePage.updatePrice] from=$from');
+      debugPrint(
+        '[DetailedImagePage.updatePrice] to=${approval.contractAddress}',
+      );
+      debugPrint('[DetailedImagePage.updatePrice] pHash=${approval.pHash}');
+      debugPrint('[DetailedImagePage.updatePrice] price=${approval.price}');
+      debugPrint('[DetailedImagePage.updatePrice] nonce=${approval.nonce}');
+      debugPrint(
+        '[DetailedImagePage.updatePrice] deadline=${approval.deadline}',
+      );
+      debugPrint(
+        '[DetailedImagePage.updatePrice] approvalHash=${approval.approvalHash}',
+      );
+      debugPrint('[DetailedImagePage.updatePrice] calldata=$data');
+
+      final result = await modal.request(
+        topic: modal.session!.topic,
+        chainId: _sepoliaChain,
+        switchToChainId: _sepoliaChain,
+        request: SessionRequestParams(
+          method: 'eth_sendTransaction',
+          params: [
+            {
+              'from': from,
+              'to': approval.contractAddress,
+              'data': data,
+              'value': '0x0',
+            },
+          ],
+        ),
+      );
+
+      final txHash = result?.toString().trim() ?? '';
+      if (txHash.isEmpty) {
+        throw Exception('Transaction hash is missing.');
+      }
+
+      await ImageApi.updatePrice(
+        id: detail.id!,
+        price: approval.price,
+        txHash: txHash,
+      );
+
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Price updated. tx $txHash')));
+      Navigator.pop(context, true);
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Price update failed: ${_friendlyError(e)}')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isUpdatingPrice = false;
+        });
+      }
+    }
+  }
+
   Future<void> _downloadImage(
     BuildContext context,
     ImageDetailInfo detail,
@@ -248,25 +403,34 @@ class _DetailedImagePageState extends State<DetailedImagePage> {
       if (!context.mounted) return;
       final downloadUrl = (data['downloadUrl'] ?? '').toString();
       final expiresAt = (data['expiresAt'] ?? '').toString();
+      if (downloadUrl.isEmpty) {
+        throw Exception('Download URL is missing.');
+      }
+
+      final response = await http.get(Uri.parse(downloadUrl));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw Exception('Watermarked image download failed.');
+      }
+
+      final savedName =
+          'watermarked-image-$imageId-${DateTime.now().millisecondsSinceEpoch}.png';
+      await Gal.putImageBytes(response.bodyBytes, name: savedName);
+
+      if (!context.mounted) return;
       showDialog(
         context: context,
         builder: (dialogContext) {
           return AlertDialog(
-            title: const Text('Download Ready'),
+            title: const Text('Download Complete'),
             content: SingleChildScrollView(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Text('Watermarked download URL'),
-                  const SizedBox(height: 8),
-                  SelectableText(
-                    downloadUrl,
-                    style: const TextStyle(fontSize: 12),
-                  ),
+                  const Text('Watermarked image saved to your gallery.'),
                   if (expiresAt.isNotEmpty) ...[
                     const SizedBox(height: 12),
-                    Text('Expires at: $expiresAt'),
+                    Text('Download link expires at: $expiresAt'),
                   ],
                 ],
               ),
@@ -279,6 +443,11 @@ class _DetailedImagePageState extends State<DetailedImagePage> {
             ],
           );
         },
+      );
+    } on GalException catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Gallery save failed: ${e.type.message}')),
       );
     } catch (e) {
       if (!context.mounted) return;
@@ -489,27 +658,27 @@ Block Number: ${image.blockNumber}
                   const SizedBox(width: 12),
                   Expanded(
                     child: FilledButton(
-                      onPressed: _isPurchasing
+                      onPressed: (_isPurchasing || _isUpdatingPrice)
                           ? null
                           : image.isOwner
-                          ? () => _deleteImage(context, image)
+                          ? () => _promptUpdatePrice(context, image)
                           : image.purchasedOrderId != null
                           ? () => _downloadImage(context, image)
                           : () => _buyImage(context, image),
                       style: FilledButton.styleFrom(
-                        backgroundColor: image.isOwner
-                            ? const Color(0xFFFC0F0F)
-                            : Colors.black,
+                        backgroundColor: Colors.black,
                         padding: const EdgeInsets.symmetric(vertical: 14),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(10),
                         ),
                       ),
                       child: Text(
-                        _isPurchasing
+                        _isUpdatingPrice
+                            ? 'Updating...'
+                            : _isPurchasing
                             ? 'Purchasing...'
                             : image.isOwner
-                            ? 'Delete Image'
+                            ? 'Update Price'
                             : image.purchasedOrderId != null
                             ? 'Download Image'
                             : 'Buy Image',
@@ -522,6 +691,26 @@ Block Number: ${image.blockNumber}
                   ),
                 ],
               ),
+              if (image.isOwner) ...[
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton(
+                    onPressed: _isUpdatingPrice
+                        ? null
+                        : () => _deleteImage(context, image),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: const Color(0xFFFC0F0F),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      side: const BorderSide(color: Color(0xFFFC0F0F)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                    child: const Text('Delete Image'),
+                  ),
+                ),
+              ],
             ],
           ),
         ),

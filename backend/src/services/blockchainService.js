@@ -6,10 +6,10 @@ let providerInstance = null;
 let contractInstance = null;
 let readOnlyContractInstance = null;
 
-const DEFAULT_CONTRACT_ADDRESS = "0x6154ab54f64106e00C715EBfC7cE6ce8C5dfF9CB";
+const DEFAULT_CONTRACT_ADDRESS = "";
 const DEFAULT_ABI_PATH = path.resolve(
   process.cwd(),
-  "../smart_contract/ignition/deployments/image-authenticator-20260423/artifacts/ImageAuthenticatorModule#ImageAuthenticator.json"
+  "../smart_contract/artifacts/contracts/ImageAuthenticator.sol/ImageAuthenticator.json"
 );
 
 const getRequiredEnv = (key) => {

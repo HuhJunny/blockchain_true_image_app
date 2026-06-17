@@ -6,6 +6,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:reown_appkit/reown_appkit.dart';
 
+import '../api/api_client.dart';
 import '../api/image_api.dart';
 import '../api/user_api.dart';
 import '../core/network_image_view.dart';
@@ -35,7 +36,7 @@ class _HomePageState extends State<HomePage> {
 
   // 실제 휴대폰에서 테스트 중이면 localhost 말고 PC IPv4 주소로 변경
   // 예: http://192.168.0.15:8080
-  static const String baseUrl = 'http://192.168.0.15:8080';
+  static const String baseUrl = ApiClient.baseUrl;
 
   @override
   void initState() {
@@ -413,7 +414,9 @@ class _HomeContent extends StatelessWidget {
                           )
                         : const Icon(Icons.verified_user_outlined),
                     label: Text(
-                      isHashVerifying ? '이미지 검증 중...' : '사진 찍어서 이미지 검증',
+                      isHashVerifying
+                          ? 'Verifying image...'
+                          : 'Capture & Verify Image',
                     ),
                     style: OutlinedButton.styleFrom(
                       padding: const EdgeInsets.symmetric(vertical: 14),

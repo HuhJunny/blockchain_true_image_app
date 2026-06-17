@@ -131,6 +131,9 @@ if (!existingImageCols.includes("block_number")) {
 if (!existingImageCols.includes("perceptual_hash")) {
   db.exec(`ALTER TABLE images ADD COLUMN perceptual_hash TEXT`);
 }
+if (!existingImageCols.includes("perceptual_patch_hashes")) {
+  db.exec(`ALTER TABLE images ADD COLUMN perceptual_patch_hashes TEXT`);
+}
 db.exec(`
   CREATE UNIQUE INDEX IF NOT EXISTS idx_images_image_hash
   ON images(image_hash)

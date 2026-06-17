@@ -42,8 +42,32 @@ class ImageApi {
     return ApiClient.delete("/images/$id");
   }
 
+  static Future updatePrice({
+    required int id,
+    required BigInt price,
+    required String txHash,
+  }) {
+    return ApiClient.patch("/images/$id/price", {
+      "price": price.toString(),
+      "txHash": txHash,
+    });
+  }
+
   static Future getVerification(int id) {
     return ApiClient.get("/images/$id/verification");
+  }
+
+  static Future<Map<String, dynamic>> checkUploadSimilarity({
+    required String fileName,
+    required Uint8List bytes,
+  }) async {
+    final result = await ApiClient.multipartPost(
+      "/verification/check",
+      fieldName: "image",
+      fileName: fileName,
+      bytes: bytes,
+    );
+    return Map<String, dynamic>.from(result as Map);
   }
 
   static Future requestDownload(int id, int orderId) {

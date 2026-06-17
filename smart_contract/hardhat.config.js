@@ -12,6 +12,18 @@ if (process.env.ALCHEMY_RPC_URL && process.env.PRIVATE_KEY) {
 }
 
 export default {
-  solidity: "0.8.24",
+  solidity: {
+    version: "0.8.24",
+    settings: {
+      evmVersion: "cancun",
+    },
+  },
   networks,
+  etherscan: {
+    enabled: Boolean(process.env.ETHERSCAN_API_KEY),
+    apiKey: process.env.ETHERSCAN_API_KEY ?? "",
+  },
+  sourcify: {
+    enabled: true,
+  },
 };

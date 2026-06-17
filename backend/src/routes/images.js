@@ -8,11 +8,13 @@ import {
   deleteImageById,
   findImageByContentHash,
   getImageById,
+  listImagesWithPerceptualHash,
   listDistinctImageCategories,
   listImagesPaged,
   searchImagesPaged,
   SORT_MODES,
   toIso8601UtcZ,
+  updateImagePriceById,
 } from "../data/imageStore.js";
 import { FavoriteConflictError, addImageFavorite, removeImageFavorite } from "../data/favoriteStore.js";
 import { insertDownloadToken } from "../data/downloadTokenStore.js";
@@ -23,7 +25,12 @@ import {
 import { upsertWatermarkedDeliveryHash } from "../data/watermarkDeliveryStore.js";
 import { findUserByEmail, findUserByGoogleId, findUserById, findUserByWalletAddress } from "../data/userStore.js";
 import { writeWatermarkedCopy } from "../services/watermarkService.js";
-import { computePerceptualHash } from "../services/perceptualHashService.js";
+import {
+  computePerceptualFingerprint,
+  findBestPerceptualMatch,
+  LIKELY_RESIZE_THRESHOLD,
+  LIKELY_REGION_THRESHOLD,
+} from "../services/perceptualHashService.js";
 import { optionalVerifyToken, verifyToken } from "../middlewares/authMiddleware.js";
 
 const router = express.Router();
@@ -162,8 +169,12 @@ router.get("/", optionalVerifyToken, (req, res) => {
 });
 
 const verificationContractAddress = () =>
-  String(process.env.IMAGE_AUTHENTICATOR_CONTRACT ?? process.env.CONTRACT_ADDRESS ?? "").trim() ||
-  "0x6154ab54f64106e00C715EBfC7cE6ce8C5dfF9CB";
+  String(
+    process.env.BLOCKCHAIN_CONTRACT_ADDRESS ??
+      process.env.IMAGE_AUTHENTICATOR_CONTRACT ??
+      process.env.CONTRACT_ADDRESS ??
+      ""
+  ).trim();
 
 router.post("/:imageId/download", verifyToken, async (req, res) => {
   try {
@@ -404,6 +415,48 @@ router.delete("/:imageId/favorite", verifyToken, (req, res) => {
   }
 });
 
+router.patch("/:imageId/price", verifyToken, (req, res) => {
+  try {
+    const imageId = parseImageIdParam(req.params.imageId);
+    if (imageId === null) {
+      return res.status(400).json({ message: "Invalid imageId." });
+    }
+
+    const currentUser = getCurrentUser(req);
+    if (!currentUser) {
+      return res.status(401).json({ message: "Authentication is required." });
+    }
+
+    const image = getImageById(imageId);
+    if (!image) {
+      return res.status(404).json({ message: "Image not found." });
+    }
+    if (currentUser.id !== image.userId) {
+      return res.status(403).json({ message: "Only the image owner can update price." });
+    }
+
+    const priceRaw = req.body?.price;
+    const txHash = typeof req.body?.txHash === "string" ? req.body.txHash.trim() : "";
+    const price = Number.parseInt(String(priceRaw ?? "").trim(), 10);
+    if (!Number.isInteger(price) || price <= 0) {
+      return res.status(400).json({ message: "price must be a positive integer." });
+    }
+    if (!isValidEthereumTxHash(txHash)) {
+      return res.status(400).json({ message: "Valid txHash is required." });
+    }
+
+    const updated = updateImagePriceById(imageId, price);
+    return res.status(200).json({
+      id: updated.id,
+      price: updated.price,
+      txHash,
+    });
+  } catch (error) {
+    console.error("[PATCH /images/:imageId/price]", error);
+    return res.status(500).json({ message: "Failed to update image price." });
+  }
+});
+
 router.delete("/:imageId", verifyToken, (req, res) => {
   const imageId = parseImageIdParam(req.params.imageId);
   if (imageId === null) {
@@ -498,8 +551,31 @@ router.post("/", verifyToken, upload.single("image"), async (req, res) => {
     }
 
     let perceptualHash = null;
+    let perceptualPatchHashes = [];
     try {
-      perceptualHash = await computePerceptualHash(req.file.buffer);
+      const fingerprint = await computePerceptualFingerprint(req.file.buffer);
+      perceptualHash = fingerprint.perceptualHash;
+      perceptualPatchHashes = fingerprint.perceptualPatchHashes;
+      const likely = findBestPerceptualMatch(
+        fingerprint,
+        listImagesWithPerceptualHash()
+      );
+      if (likely) {
+        return res.status(409).json({
+          code: "SIMILAR_IMAGE_DETECTED",
+          message: "Similar registered image detected. Upload blocked.",
+          imageId: likely.imageId,
+          imageHash: likely.imageHash,
+          txHash: likely.txHash,
+          hammingDistance: likely.hammingDistance,
+          threshold: likely.threshold,
+          fullThreshold: LIKELY_RESIZE_THRESHOLD,
+          regionThreshold: LIKELY_REGION_THRESHOLD,
+          matchType: likely.matchType,
+          uploadRegion: likely.uploadRegion,
+          candidateRegion: likely.candidateRegion,
+        });
+      }
     } catch (hashError) {
       console.warn("[POST /images] perceptual hash 계산 실패:", hashError?.message || hashError);
     }
@@ -545,6 +621,7 @@ router.post("/", verifyToken, upload.single("image"), async (req, res) => {
       txHash: String(txHash).trim(),
       blockNumber,
       perceptualHash,
+      perceptualPatchHashes,
     });
 
     return res.status(201).json({
